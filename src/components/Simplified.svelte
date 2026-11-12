@@ -8,7 +8,8 @@
   } from 'lucide-svelte';
   import { notesApi, tasksApi, inboxApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
-  import { buildWorkspace, nextTask, toSlides, searchWorkspace } from '../lib/workspace';
+  import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod } from '../lib/workspace';
+  import { parseTaskCapture } from '../lib/smartCapture';
   import type { Note, Task, InboxItem } from '../lib/types';
 
   type View = 'now' | 'archive';
@@ -24,6 +25,7 @@
   let sidebarVisible = $state(true);
   let focusedTaskId = $state<string | null>(null);
   let captureKind = $state<'idea' | 'task'>('idea');
+  let clock = $state(new Date());
   let archiveFilter = $state<'all' | 'note' | 'task' | 'idea'>('all');
   const FOCUS_KEY = 'recall-selected-focus-task-v1';
 
@@ -54,12 +56,15 @@
   let entries = $derived(buildWorkspace(notes, tasks, ideas));
   let selected = $derived(entries.find(item => item.key === selectedKey) ?? null);
   let matches = $derived(searchWorkspace(entries, search, archiveFilter));
+  let todayTasks = $derived(tasksByPeriod(tasks, 'today', clock));
+  let laterTasks = $derived(tasksByPeriod(tasks, 'later', clock));
+  let somedayTasks = $derived(tasksByPeriod(tasks, 'someday', clock));
+  let smartDraft = $derived(parseTaskCapture(newText, clock));
   let currentTask = $derived(
-    tasks.find(task => task.id === focusedTaskId && task.deleted_at === null && task.completed_at === null)
-    ?? nextTask(tasks)
+    todayTasks.find(task => task.id === focusedTaskId)
+    ?? nextTask(todayTasks)
   );
-  let otherTasks = $derived(tasks.filter(t =>
-    t.deleted_at === null && t.completed_at === null && t.id !== currentTask?.id)
+  let otherTasks = $derived(todayTasks.filter(t => t.id !== currentTask?.id)
     .sort((a, b) => (a.due_at ?? Infinity) - (b.due_at ?? Infinity) || a.created_at - b.created_at));
   let dueNotes = $derived(notes.filter(n => n.deleted_at === null && n.remind_at !== null &&
     n.notified_at === null).sort((a,b) => (a.remind_at ?? Infinity) - (b.remind_at ?? Infinity)));
@@ -82,6 +87,7 @@
   onMount(() => {
     try { focusedTaskId = localStorage.getItem(FOCUS_KEY); } catch { /* No local storage available. */ }
     let alive = true;
+    const dayClock = setInterval(() => { clock = new Date(); }, 60_000);
     const unlisteners: Array<() => void> = [];
     void refresh();
     for (const eventName of ['notes:changed', 'tasks:changed', 'inbox:changed']) {
@@ -105,6 +111,7 @@
     window.addEventListener('keydown', onKey);
     return () => {
       alive = false;
+      clearInterval(dayClock);
       unlisteners.forEach(fn => fn());
       window.removeEventListener('keydown', onKey);
       if (saveTimer) clearTimeout(saveTimer);
@@ -127,8 +134,10 @@
     try {
       const text = newText.trim();
       if (captureKind === 'task') {
-        const task = await tasksApi.create(text);
-        if (!currentTask) chooseFocus(task.id);
+        const draft = parseTaskCapture(text, new Date());
+        if (!draft.title.trim() || draft.title.length > 250) throw new Error('Use um título de até 250 caracteres.');
+        const task = await tasksApi.createPlanned(draft.title, draft.details, draft.bucket, draft.plannedFor, draft.dueAt);
+        if (!currentTask && draft.bucket === 'today') chooseFocus(task.id);
       } else {
         await inboxApi.capture(text);
       }
@@ -220,8 +229,41 @@
 
   async function focusAndGo(id: string) {
     if (!(await flushDraft())) return;
-    chooseFocus(id);
-    await switchView('now');
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+    try {
+      // Focusing a future task explicitly brings it to Today.
+      if (taskPeriod(task, clock) !== 'today') {
+        await tasksApi.plan(id, 'today', null);
+        await refresh();
+      }
+      chooseFocus(id);
+      await switchView('now');
+    } catch (e) { error = 'Não foi possível mudar o foco: ' + String(e); }
+  }
+
+  async function changeTaskPeriod(task: Task, bucket: Task['bucket']) {
+    if (busy || !(await flushDraft())) return;
+    busy = true;
+    try {
+      await tasksApi.plan(task.id, bucket, bucket === 'later' && task.bucket === 'later' ? task.planned_for : null);
+      if (bucket !== 'today' && focusedTaskId === task.id) clearFocus();
+      await refresh();
+    } catch (e) { error = 'Não foi possível organizar a tarefa: ' + String(e); }
+    finally { busy = false; }
+  }
+
+  async function setPlannedDate(task: Task, value: string) {
+    if (busy || !(await flushDraft())) return;
+    const at = value ? new Date(value + 'T00:00:00').getTime() : null;
+    if (at !== null && !Number.isFinite(at)) { error = 'Data de planejamento inválida.'; return; }
+    busy = true;
+    try {
+      await tasksApi.plan(task.id, 'later', at);
+      if (focusedTaskId === task.id) clearFocus();
+      await refresh();
+    } catch (e) { error = 'Não foi possível agendar esta tarefa: ' + String(e); }
+    finally { busy = false; }
   }
 
   function chooseFocus(id: string) {
@@ -447,7 +489,7 @@
 
         {#if otherTasks.length > 0}
           <div class="rx-next">
-            <h3>Depois</h3>
+            <h3>Em seguida</h3>
             {#each otherTasks.slice(0, 3) as task (task.id)}
               <div class="rx-next-row">
                 <button title="Concluir" aria-label={'Concluir ' + task.title} disabled={busy} onclick={() => { void completeTask(task); }}><Circle size={19}/></button>
@@ -456,6 +498,13 @@
               </div>
             {/each}
             {#if otherTasks.length > 3}<button class="rx-text-link" onclick={() => { void switchView('archive'); }}>Ver todas no arquivo <ArrowRight size={14}/></button>{/if}
+          </div>
+        {/if}
+
+        {#if laterTasks.length > 0 || somedayTasks.length > 0}
+          <div class="rx-time-summary" aria-label="Tarefas fora de hoje">
+            {#if laterTasks.length > 0}<button onclick={() => { archiveFilter = 'task'; void switchView('archive'); }}><CalendarClock size={15}/> Depois <span>{laterTasks.length}</span></button>{/if}
+            {#if somedayTasks.length > 0}<button onclick={() => { archiveFilter = 'task'; void switchView('archive'); }}><Archive size={15}/> Algum dia <span>{somedayTasks.length}</span></button>{/if}
           </div>
         {/if}
 
@@ -480,7 +529,10 @@
             <input id="rx-capture-now" maxlength="250" bind:value={newText} placeholder={captureKind === 'idea' ? 'Anote antes de esquecer...' : 'Qual é a próxima ação?'} />
             <button class="rx-capture-submit" type="submit" aria-label={captureKind === 'idea' ? 'Guardar ideia' : 'Criar tarefa'} title={captureKind === 'idea' ? 'Guardar ideia' : 'Criar tarefa'} disabled={!newText.trim() || busy}><ArrowRight size={18}/></button>
           </div>
-          <p class="rx-compose-tip">Enter para salvar · Ctrl+Shift+Espaço para anotações longas.</p>
+          {#if captureKind === 'task' && smartDraft.recognized}
+            <p class="rx-smart-preview"><CalendarClock size={14}/> {smartDraft.label} <span>· Prazo não envia notificação ainda</span></p>
+          {/if}
+          <p class="rx-compose-tip">Ex.: Revisar slides amanhã às 15h · Enter para salvar</p>
         </form>
       </section>
     {:else}
@@ -512,7 +564,7 @@
                   </span>
                   <span class="rx-item-preview">{item.text || (item.type === 'task' ? 'Tarefa' : 'Nota')}</span>
                   <span class="rx-item-meta">
-                    {item.type === 'idea' ? 'Ideia' : item.type === 'task' ? (item.task.completed_at ? 'Concluída' : 'Tarefa') : (item.note.kind === 'presentation' ? 'Apresentação' : 'Nota')}
+                    {item.type === 'idea' ? 'Ideia' : item.type === 'task' ? (item.task.completed_at ? 'Concluída' : item.task.bucket === 'someday' ? 'Tarefa · Algum dia' : taskPeriod(item.task, clock) === 'later' ? 'Tarefa · Depois' : 'Tarefa · Hoje') : (item.note.kind === 'presentation' ? 'Apresentação' : 'Nota')}
                     {#if item.type === 'note' && item.note.remind_at}<Bell size={12}/>{/if}
                   </span>
                 </button>
@@ -544,7 +596,18 @@
               <div class="rx-detail-head"><span>TAREFA</span><button class="rx-icon-button" onclick={() => { void deleteSelected(); }} title="Excluir tarefa" aria-label="Excluir tarefa"><Trash2 size={17}/></button></div>
               <label class="rx-field"><span>Título</span><input maxlength="250" value={taskTitle} oninput={(e) => onTaskEdit('title', e.currentTarget.value)} onblur={() => { void saveTask(selected.task); }}/></label>
               <label class="rx-field"><span>Próximo passo ou detalhes</span><textarea rows="7" maxlength="100000" value={taskDetails} oninput={(e) => onTaskEdit('details', e.currentTarget.value)} onblur={() => { void saveTask(selected.task); }} placeholder="O que preciso fazer?"></textarea></label>
-              <label class="rx-field"><span>Prazo (ainda não envia notificação)</span><input type="datetime-local" value={taskDue} onchange={(e) => onTaskEdit('due', e.currentTarget.value)} onblur={() => { void saveTask(selected.task); }}/></label>
+              <div class="rx-schedule" aria-label="Planejamento da tarefa">
+                <span>Quando quer fazer?</span>
+                <div role="group" aria-label="Período" class="rx-schedule-options">
+                  <button class:rx-active={taskPeriod(selected.task, clock) === 'today'} aria-pressed={taskPeriod(selected.task, clock) === 'today'} disabled={busy} onclick={() => { void changeTaskPeriod(selected.task, 'today'); }}>Hoje</button>
+                  <button class:rx-active={taskPeriod(selected.task, clock) === 'later'} aria-pressed={taskPeriod(selected.task, clock) === 'later'} disabled={busy} onclick={() => { void changeTaskPeriod(selected.task, 'later'); }}>Depois</button>
+                  <button class:rx-active={taskPeriod(selected.task, clock) === 'someday'} aria-pressed={taskPeriod(selected.task, clock) === 'someday'} disabled={busy} onclick={() => { void changeTaskPeriod(selected.task, 'someday'); }}>Algum dia</button>
+                </div>
+              </div>
+              {#if selected.task.bucket === 'later'}
+                <label class="rx-field"><span>Voltar para Hoje em (opcional)</span><input type="date" value={selected.task.planned_for === null ? '' : toLocalInput(selected.task.planned_for).slice(0, 10)} onchange={(e) => { void setPlannedDate(selected.task, e.currentTarget.value); }}/></label>
+              {/if}
+              <label class="rx-field"><span>Prazo (não envia notificação ainda)</span><input type="datetime-local" value={taskDue} onchange={(e) => onTaskEdit('due', e.currentTarget.value)} onblur={() => { void saveTask(selected.task); }}/></label>
               <p class="rx-task-save" aria-live="polite"><Check size={13}/>{taskSaving ? 'Salvando...' : taskDirty ? 'Alterações pendentes' : 'Salvo automaticamente'}</p>
               <div class="rx-actions">
                 <button class="rx-primary" disabled={busy} onclick={() => { void focusAndGo(selected.task.id); }}><Target size={16}/> {focusedTaskId === selected.task.id ? 'Em foco' : 'Focar agora'}</button>
