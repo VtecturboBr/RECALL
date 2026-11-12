@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Note } from './types';
+import type { Note, Task, InboxItem } from './types';
 
 export const notesApi = {
   list: () => invoke<Note[]>('list_notes'),
@@ -22,3 +22,21 @@ export function toLocalInput(timestamp: number | null): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+
+
+export const tasksApi = {
+  list: () => invoke<Task[]>('list_tasks'),
+  create: (title: string) => invoke<Task>('create_task', { title }),
+  update: (id: string, title: string, details: string, dueAt: number | null) =>
+    invoke<Task>('update_task', { id, title, details, dueAt }),
+  complete: (id: string, completed: boolean) => invoke<Task>('set_task_completed', { id, completed }),
+  delete: (id: string) => invoke<void>('delete_task', { id })
+};
+
+export const inboxApi = {
+  list: () => invoke<InboxItem[]>('list_inbox'),
+  capture: (text: string) => invoke<InboxItem>('capture_inbox', { text }),
+  dismiss: (id: string) => invoke<void>('dismiss_inbox', { id }),
+  toNote: (id: string) => invoke<Note>('inbox_to_note', { id }),
+  toTask: (id: string) => invoke<Task>('inbox_to_task', { id })
+};
