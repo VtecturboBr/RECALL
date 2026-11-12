@@ -104,6 +104,14 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     if old_notes > 0 && old_revision == 0 {
         create_backup(&pool, path, "pre-integrity").await
             .map_err(|e| sqlx::Error::Protocol(format!("Backup antes da migração falhou: {e}")))?;
+    } else if old_notes > 0 {
+        let has_reminders: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='reminder_rules'"
+        ).fetch_one(&pool).await?;
+        if has_reminders == 0 {
+            create_backup(&pool, path, "pre-reminders").await
+                .map_err(|e| sqlx::Error::Protocol(format!("Backup pré-lembretes falhou: {e}")))?;
+        }
     }
     sqlx::query("CREATE TABLE IF NOT EXISTS notes (
         id TEXT PRIMARY KEY NOT NULL,
@@ -138,6 +146,9 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     // Safe additive migrations: existing notes from v0.4 are preserved.
     crate::tasks::initialize(&pool).await?;
     crate::inbox::initialize(&pool).await?;
+    crate::reminders::initialize(&pool).await?;
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await?;
+    if version < 2 { sqlx::query("PRAGMA user_version = 2").execute(&pool).await?; }
     Ok(pool)
 }
 
