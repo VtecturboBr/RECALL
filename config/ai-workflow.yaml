@@ -1,0 +1,37 @@
+# Configuração portátil do workflow RECALL — 12/11/2026
+perfil: alef
+versao: 1
+projeto_atual: RECALL
+autonomia: resolver_detalhes_e_perguntar_so_o_essencial
+prioridade: maximo_acabamento_e_qualidade
+exploracao_visual: comparar_tres_direcoes
+custos: ferramentas_locais_gratuitas_permitidas
+pode_sugerir_servicos_pagos: true
+contratar_servicos_automaticamente: false
+execucao_local: gratuita_permitida
+ciclos_refinamento_maximo: 3
+formato_entrega: resultado_pronto_com_resumo_curto
+continuidade: arquivos_no_repositorio
+repositorio: VtecturboBr/RECALL
+grupos_habilitados: todos_com_selecao_automatica
+skills_externas:
+  estado: pendente
+  lista: docs/AI_SKILLS.md
+modulos_proprios:
+  - direcao-visual-alef
+  - continuidade-lin0
+  - criar-avaliar-refinar
+  - simplificacao-de-produto
+  - prototipo-jogavel-lin0
+documentacao:
+  instrucoes_para_agentes: AGENTS.md
+  workflow: docs/AI_WORKFLOW.md
+  catalogo_de_skills: docs/AI_SKILLS.md
+  checkpoint: docs/AI_CHECKPOINT.md
+decisoes_confirmadas:
+  - manter_dados_legados
+  - preservar_main_estavel
+  - nao_declarar_testes_manuais_sem_evidencia
+pendencias:
+  - validar_alpha4_com_testes_reais_windows
+  - instalar_ou_carregar_skills_externas_se_e_quando_necessarias
