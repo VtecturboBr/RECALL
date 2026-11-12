@@ -40,3 +40,7 @@ Testes manuais necessários:
 - [ ] Testar captura global Ctrl+Shift+Espaço nos modos Ideia e Tarefa.
 
 Alpha 4 é experimental e não equivale a um aplicativo instalado e validado em Windows real.
+
+## Diagnóstico de qualidade (12/11/2026)
+
+A revisão estática da Alpha 4 está em `docs/AUDITORIA_ALPHA4_2026-11-12.md`, com plano em `docs/ALPHA4_PLANO_CORRECOES.md` e testes manuais pendentes em `docs/ALPHA4_TESTES_MANUAIS.md`. Nenhum defeito foi corrigido por essa documentação; a PR #5 permanece em rascunho.
