@@ -8,6 +8,7 @@ export interface Note {
   notified_at: number | null;
   created_at: number;
   updated_at: number;
+  revision: number;
   deleted_at: number | null;
 }
 

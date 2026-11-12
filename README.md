@@ -71,3 +71,7 @@ O código foi importado de uma versão experimental. O GitHub Actions aprovou Sv
 - [Configuração portátil](config/ai-workflow.yaml): preferências confirmadas.
 
 A configuração não instala skills e não confirma testes em Windows real; consulte o checkpoint antes de agir.
+
+## Alpha 4.1 — integridade de dados (branch experimental)
+
+A branch \`feature/v0.5-alpha4-integridade\` adiciona revisão de notas, detecção de conflitos entre janelas, rascunhos recuperáveis, snapshots SQLite seguros e roteiro de restauração offline. Veja [guia de proteção e testes](docs/INTEGRIDADE_ALPHA4_1.md). Não altera a \`main\`; validação Windows real ainda é necessária.

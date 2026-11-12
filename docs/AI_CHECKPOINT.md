@@ -45,3 +45,12 @@ O usuário iniciou uma nova fase focada em qualidade, refinamento e continuidade
 ## Atualização do checkpoint
 
 Após cada entrega concreta: registrar branch, commit/PR, funcionalidades modificadas, evidências dos testes, decisões confirmadas, riscos e próxima ação. Não registrar propostas como recursos já implementados.
+
+## Implementação de integridade (branch separada, ainda em revisão)
+
+- Branch: \`feature/v0.5-alpha4-integridade\`; base: \`feature/v0.5-alpha4-captura-tempo\`.
+- Escopo: revisões e detecção de conflito em \`notes\`, recuperação local de rascunhos, proteção de notas flutuantes, backup WAL consistente, validação, restauração offline assistida, testes SQLite/Rust e Python.
+- Documento: \`docs/INTEGRIDADE_ALPHA4_1.md\`.
+- Migração: nova tabela auxiliar \`note_revisions\` com backup pré-migração e \`PRAGMA user_version=1\`; não remove colunas.
+- **Atenção:** o PR é trabalho em andamento e não deve ser integrado sem CI e testes Windows. Não tratar a existência do código como validação do comportamento.
+- Lembretes 2.0 e \`Onde parei?\` ficam fora deste PR.

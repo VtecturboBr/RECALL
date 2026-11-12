@@ -10,7 +10,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
 use tauri_plugin_notification::NotificationExt;
 
-struct AppState { pool: SqlitePool }
+struct AppState { pool: SqlitePool, db_path: std::path::PathBuf }
 
 fn reveal_capture(app: &tauri::AppHandle) -> Result<(), String> {
     let window = app.get_webview_window("capture")
@@ -53,11 +53,33 @@ async fn create_note(state: tauri::State<'_, AppState>, app: tauri::AppHandle, k
     Ok(note)
 }
 #[tauri::command]
-async fn save_note(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, title: String, body: String) -> Result<db::Note, String> {
+async fn save_note(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, title: String, body: String, expected_revision: i64) -> Result<db::Note, String> {
     if title.chars().count() > 250 || body.chars().count() > 100_000 { return Err("Nota muito longa".into()); }
-    let note = db::save(&state.pool, &id, &title, &body).await.map_err(|e| e.to_string())?;
+    if expected_revision < 0 { return Err("Revisão inválida".into()); }
+    let note = db::save(&state.pool, &id, &title, &body, expected_revision).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "CONFLITO_REVISAO: A nota foi alterada em outra janela ou excluída. Sua edição não foi sobrescrita.".to_string())?;
     let _ = app.emit("notes:changed", &note.id);
     Ok(note)
+}
+
+#[tauri::command]
+async fn create_note_copy(state: tauri::State<'_, AppState>, app: tauri::AppHandle, title: String, body: String, kind: String) -> Result<db::Note, String> {
+    if title.chars().count() > 250 || body.chars().count() > 100_000 || (kind != "note" && kind != "presentation") {
+        return Err("Conteúdo de cópia inválido".into());
+    }
+    let note = db::create_copy(&state.pool, &title, &body, &kind).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("notes:changed", &note.id);
+    Ok(note)
+}
+
+#[tauri::command]
+async fn create_data_backup(state: tauri::State<'_, AppState>) -> Result<db::BackupInfo, String> {
+    db::create_backup(&state.pool, &state.db_path, "manual").await
+}
+
+#[tauri::command]
+async fn list_data_backups(state: tauri::State<'_, AppState>) -> Result<Vec<db::BackupInfo>, String> {
+    db::list_backups(&state.db_path)
 }
 #[tauri::command]
 async fn set_note_pin(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, pinned: bool) -> Result<db::Note, String> {
@@ -180,13 +202,13 @@ async fn inbox_to_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle,
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, create_planned_task, set_task_plan, update_task, set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task])
+        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, create_note_copy, create_data_backup, list_data_backups, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, create_planned_task, set_task_plan, update_task, set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task])
         .setup(|app| {
             let path = app.path().app_data_dir()?;
             std::fs::create_dir_all(&path)?;
             let db_path = path.join("memoria.sqlite");
             let pool = tauri::async_runtime::block_on(db::connect(&db_path))?;
-            app.manage(AppState { pool: pool.clone() });
+            app.manage(AppState { pool: pool.clone(), db_path: db_path.clone() });
 
             #[cfg(desktop)] {
                 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -268,7 +290,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             // The main window is hidden, not destroyed, so the tray and reminders keep running.
             // Preserve both main and capture windows; hiding them keeps shortcuts active.
-            if window.label() == "main" || window.label() == "capture" {
+            if window.label() == "main" || window.label() == "capture" || window.label().starts_with("note_") {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();

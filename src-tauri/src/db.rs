@@ -1,6 +1,7 @@
 use serde::Serialize;
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteJournalMode}, FromRow, SqlitePool};
 use std::{path::Path, time::{SystemTime, UNIX_EPOCH}, time::Duration};
+use std::fs;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -14,6 +15,7 @@ pub struct Note {
     pub notified_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub revision: i64,
     pub deleted_at: Option<i64>,
 }
 
@@ -21,7 +23,68 @@ pub fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64
 }
 
-const FIELDS: &str = "id,title,body,kind,pinned,remind_at,notified_at,created_at,updated_at,deleted_at";
+const FIELDS: &str = "n.id,n.title,n.body,n.kind,n.pinned,n.remind_at,n.notified_at,n.created_at,n.updated_at,n.deleted_at,COALESCE(r.revision,0) AS revision";
+const JOIN: &str = "FROM notes n LEFT JOIN note_revisions r ON r.note_id=n.id";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BackupInfo {
+    pub file_name: String,
+    pub created_at: i64,
+    pub size_bytes: u64,
+    pub file_path: String,
+}
+
+// SQLite itself creates a consistent WAL-aware snapshot. A .partial file is never
+// exposed as a valid backup; a quick_check is required before the final rename.
+pub async fn create_backup(pool: &SqlitePool, db_path: &Path, purpose: &str) -> Result<BackupInfo, String> {
+    let folder = db_path.parent().ok_or("Caminho do banco inválido")?.join("backups");
+    fs::create_dir_all(&folder).map_err(|e| format!("Não foi possível criar a pasta de backup: {e}"))?;
+    let created_at = now_ms();
+    let file_name = format!("recall-{purpose}-{created_at}-{}.sqlite", Uuid::new_v4());
+    let target = folder.join(&file_name);
+    let partial = folder.join(format!("{file_name}.partial"));
+    let result: Result<(), String> = async {
+        sqlx::query("VACUUM INTO ?")
+            .bind(partial.to_string_lossy().to_string())
+            .execute(pool).await.map_err(|e| format!("Falha no snapshot SQLite: {e}"))?;
+        let options = SqliteConnectOptions::new().filename(&partial).read_only(true);
+        let check_pool = SqlitePoolOptions::new().max_connections(1).connect_with(options)
+            .await.map_err(|e| format!("Não foi possível abrir o backup para validar: {e}"))?;
+        let result = sqlx::query_scalar::<_, String>("PRAGMA quick_check")
+            .fetch_one(&check_pool).await;
+        check_pool.close().await;
+        match result {
+            Ok(value) if value == "ok" => (),
+            Ok(value) => return Err(format!("Backup reprovado no quick_check: {value}")),
+            Err(e) => return Err(format!("Backup reprovado na validação: {e}")),
+        }
+        fs::rename(&partial, &target).map_err(|e| format!("Não foi possível finalizar o backup: {e}"))?;
+        Ok(())
+    }.await;
+    if result.is_err() { let _ = fs::remove_file(&partial); }
+    result?;
+    let size_bytes = fs::metadata(&target).map_err(|e| e.to_string())?.len();
+    Ok(BackupInfo { file_name, created_at, size_bytes, file_path: target.to_string_lossy().to_string() })
+}
+
+pub fn list_backups(db_path: &Path) -> Result<Vec<BackupInfo>, String> {
+    let dir = db_path.parent().ok_or("Caminho do banco inválido")?.join("backups");
+    if !dir.exists() { return Ok(Vec::new()); }
+    let mut items = Vec::new();
+    for e in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+        let e = e.map_err(|e| e.to_string())?;
+        let name = e.file_name().to_string_lossy().to_string();
+        if !name.starts_with("recall-") || !name.ends_with(".sqlite") { continue; }
+        let metadata = e.metadata().map_err(|e| e.to_string())?;
+        if !metadata.is_file() { continue; }
+        let modified = metadata.modified().ok().and_then(|m| m.duration_since(UNIX_EPOCH).ok())
+            .map(|m| m.as_millis() as i64).unwrap_or(0);
+        items.push(BackupInfo { file_name: name, created_at: modified, size_bytes: metadata.len(), file_path: e.path().to_string_lossy().to_string() });
+    }
+    items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(items)
+}
+
 
 pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     let options = SqliteConnectOptions::new()
@@ -30,6 +93,18 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
         .journal_mode(SqliteJournalMode::Wal)
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await?;
+    // On upgrades, the first integrity-schema change is preceded by a verified
+    // snapshot. New databases do not need a pre-migration backup.
+    let old_notes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='notes'"
+    ).fetch_one(&pool).await?;
+    let old_revision: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='note_revisions'"
+    ).fetch_one(&pool).await?;
+    if old_notes > 0 && old_revision == 0 {
+        create_backup(&pool, path, "pre-integrity").await
+            .map_err(|e| sqlx::Error::Protocol(format!("Backup antes da migração falhou: {e}")))?;
+    }
     sqlx::query("CREATE TABLE IF NOT EXISTS notes (
         id TEXT PRIMARY KEY NOT NULL,
         title TEXT NOT NULL DEFAULT '',
@@ -44,6 +119,22 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     )").execute(&pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_active_notes ON notes (deleted_at, updated_at DESC)").execute(&pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_due_notes ON notes (remind_at) WHERE deleted_at IS NULL AND notified_at IS NULL").execute(&pool).await?;
+    // The dedicated revision table keeps the existing notes schema intact.
+    // Triggers also observe edits made by older app builds writing to notes.
+    sqlx::query("CREATE TABLE IF NOT EXISTS note_revisions (
+        note_id TEXT PRIMARY KEY NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0)
+    )").execute(&pool).await?;
+    sqlx::query("INSERT OR IGNORE INTO note_revisions(note_id,revision) SELECT id,0 FROM notes")
+        .execute(&pool).await?;
+    sqlx::query("CREATE TRIGGER IF NOT EXISTS notes_revision_insert AFTER INSERT ON notes
+        BEGIN INSERT OR IGNORE INTO note_revisions(note_id,revision) VALUES(NEW.id,0); END")
+        .execute(&pool).await?;
+    sqlx::query("CREATE TRIGGER IF NOT EXISTS notes_revision_edit AFTER UPDATE OF title,body ON notes
+        BEGIN UPDATE note_revisions SET revision=revision+1 WHERE note_id=NEW.id; END")
+        .execute(&pool).await?;
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await?;
+    if version < 1 { sqlx::query("PRAGMA user_version = 1").execute(&pool).await?; }
     // Safe additive migrations: existing notes from v0.4 are preserved.
     crate::tasks::initialize(&pool).await?;
     crate::inbox::initialize(&pool).await?;
@@ -51,12 +142,12 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Note>, sqlx::Error> {
-    sqlx::query_as::<_, Note>(&format!("SELECT {FIELDS} FROM notes WHERE deleted_at IS NULL ORDER BY updated_at DESC"))
+    sqlx::query_as::<_, Note>(&format!("SELECT {FIELDS} {JOIN} WHERE n.deleted_at IS NULL ORDER BY n.updated_at DESC"))
         .fetch_all(pool).await
 }
 
 pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<Note>, sqlx::Error> {
-    sqlx::query_as::<_, Note>(&format!("SELECT {FIELDS} FROM notes WHERE id=? AND deleted_at IS NULL"))
+    sqlx::query_as::<_, Note>(&format!("SELECT {FIELDS} {JOIN} WHERE n.id=? AND n.deleted_at IS NULL"))
         .bind(id).fetch_optional(pool).await
 }
 
@@ -88,11 +179,25 @@ pub async fn capture(pool: &SqlitePool, text: &str) -> Result<Note, sqlx::Error>
     get(pool, &id).await?.ok_or(sqlx::Error::RowNotFound)
 }
 
-pub async fn save(pool: &SqlitePool, id: &str, title: &str, body: &str) -> Result<Note, sqlx::Error> {
-    let result = sqlx::query("UPDATE notes SET title=?, body=?, updated_at=? WHERE id=? AND deleted_at IS NULL")
-        .bind(title).bind(body).bind(now_ms()).bind(id).execute(pool).await?;
-    if result.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
-    get(pool, id).await?.ok_or(sqlx::Error::RowNotFound)
+pub async fn save(pool: &SqlitePool, id: &str, title: &str, body: &str, expected_revision: i64) -> Result<Option<Note>, sqlx::Error> {
+    // Atomic compare-and-swap. The trigger increments revision in the same
+    // statement. Different WebViews cannot overwrite stale contents.
+    let result = sqlx::query("UPDATE notes SET title=?, body=?, updated_at=?
+        WHERE id=? AND deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM note_revisions WHERE note_id=notes.id AND revision=?)")
+        .bind(title).bind(body).bind(now_ms()).bind(id).bind(expected_revision)
+        .execute(pool).await?;
+    if result.rows_affected() == 0 { return Ok(None); }
+    get(pool, id).await
+}
+
+pub async fn create_copy(pool: &SqlitePool, title: &str, body: &str, kind: &str) -> Result<Note, sqlx::Error> {
+    let id = Uuid::new_v4().to_string();
+    let now = now_ms();
+    sqlx::query("INSERT INTO notes(id,title,body,kind,created_at,updated_at) VALUES(?,?,?,?,?,?)")
+        .bind(&id).bind(title).bind(body).bind(kind).bind(now).bind(now)
+        .execute(pool).await?;
+    get(pool, &id).await?.ok_or(sqlx::Error::RowNotFound)
 }
 
 pub async fn set_pin(pool: &SqlitePool, id: &str, pinned: bool) -> Result<Note, sqlx::Error> {
@@ -116,7 +221,7 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
 }
 
 pub async fn due(pool: &SqlitePool) -> Result<Vec<Note>, sqlx::Error> {
-    sqlx::query_as::<_, Note>(&format!("SELECT {FIELDS} FROM notes WHERE deleted_at IS NULL AND remind_at IS NOT NULL AND remind_at<=? AND notified_at IS NULL ORDER BY remind_at LIMIT 30"))
+    sqlx::query_as::<_, Note>(&format!("SELECT {FIELDS} {JOIN} WHERE n.deleted_at IS NULL AND n.remind_at IS NOT NULL AND n.remind_at<=? AND n.notified_at IS NULL ORDER BY n.remind_at LIMIT 30"))
         .bind(now_ms()).fetch_all(pool).await
 }
 
@@ -125,4 +230,102 @@ pub async fn mark_notified(pool: &SqlitePool, id: &str, remind_at: i64) -> Resul
     sqlx::query("UPDATE notes SET notified_at=? WHERE id=? AND remind_at=? AND notified_at IS NULL AND deleted_at IS NULL")
         .bind(now_ms()).bind(id).bind(remind_at).execute(pool).await?;
     Ok(())
+}
+
+
+#[cfg(test)]
+mod integrity_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    fn temporary_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("recall-integrity-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn legacy_upgrade_snapshots_before_creating_revision_table() {
+        let dir = temporary_dir();
+        let path = dir.join("memoria.sqlite");
+        let opts = SqliteConnectOptions::new().filename(&path).create_if_missing(true);
+        let legacy = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await.unwrap();
+        sqlx::query("CREATE TABLE notes (
+            id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT 'note', pinned INTEGER NOT NULL DEFAULT 0,
+            remind_at INTEGER, notified_at INTEGER, created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL, deleted_at INTEGER
+        )").execute(&legacy).await.unwrap();
+        sqlx::query("INSERT INTO notes(id,title,body,created_at,updated_at) VALUES('old','Meu texto','Preservar',1,1)")
+            .execute(&legacy).await.unwrap();
+        legacy.close().await;
+
+        let pool = connect(&path).await.unwrap();
+        let first = get(&pool, "old").await.unwrap().unwrap();
+        assert_eq!(first.revision, 0);
+        assert_eq!(first.title, "Meu texto");
+        assert_eq!(first.body, "Preservar");
+        let backups = list_backups(&path).unwrap();
+        assert_eq!(backups.len(), 1);
+        assert!(backups[0].file_name.contains("pre-integrity"));
+        assert!(backups[0].size_bytes > 0);
+
+        let changed = save(&pool, "old", "Revisado", "Conteúdo", 0).await.unwrap().unwrap();
+        assert_eq!(changed.revision, 1);
+        assert!(save(&pool, "old", "Obsoleto", "Antigo", 0).await.unwrap().is_none());
+        assert_eq!(get(&pool, "old").await.unwrap().unwrap().title, "Revisado");
+
+        let second_pool = connect(&path).await.unwrap();
+        assert_eq!(list_backups(&path).unwrap().len(), 1, "migration backup cannot repeat");
+        second_pool.close().await;
+        pool.close().await;
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn simultaneous_saves_reject_one_stale_revision() {
+        let dir = temporary_dir();
+        let path = dir.join("memoria.sqlite");
+        let pool = connect(&path).await.unwrap();
+        let note = create(&pool, "note").await.unwrap();
+        let (a, b) = tokio::join!(
+            save(&pool, &note.id, "Primeira", "A", note.revision),
+            save(&pool, &note.id, "Segunda", "B", note.revision)
+        );
+        let a = a.unwrap().is_some();
+        let b = b.unwrap().is_some();
+        assert_ne!(a, b, "exactly one of the same-revision saves may succeed");
+        assert_eq!(get(&pool, &note.id).await.unwrap().unwrap().revision, 1);
+
+        // A save from an older binary still increments the note revision via trigger.
+        sqlx::query("UPDATE notes SET body='Edição externa' WHERE id=?")
+            .bind(&note.id).execute(&pool).await.unwrap();
+        assert_eq!(get(&pool, &note.id).await.unwrap().unwrap().revision, 2);
+        assert!(save(&pool, &note.id, "Stale", "X", 1).await.unwrap().is_none());
+
+        pool.close().await;
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn snapshot_has_sqlite_integrity_and_all_committed_data() {
+        let dir = temporary_dir();
+        let path = dir.join("memoria.sqlite");
+        let pool = connect(&path).await.unwrap();
+        let note = create_copy(&pool, "Importante", "Salvar no WAL", "note").await.unwrap();
+        let item = create_backup(&pool, &path, "manual").await.unwrap();
+        assert!(item.file_name.starts_with("recall-manual-"));
+        assert!(item.file_path.ends_with(".sqlite"));
+        let options = SqliteConnectOptions::new().filename(&item.file_path).read_only(true);
+        let other = SqlitePoolOptions::new().max_connections(1).connect_with(options).await.unwrap();
+        let check: String = sqlx::query_scalar("PRAGMA quick_check").fetch_one(&other).await.unwrap();
+        assert_eq!(check, "ok");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes WHERE id=?")
+            .bind(&note.id).fetch_one(&other).await.unwrap();
+        assert_eq!(count, 1);
+        other.close().await;
+        pool.close().await;
+        let _ = fs::remove_dir_all(dir);
+    }
 }
