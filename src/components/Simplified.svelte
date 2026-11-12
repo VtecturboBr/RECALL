@@ -4,7 +4,7 @@
   import {
     BrainCircuit, CircleDot, Archive, Search, Plus, Check, Circle, Bell,
     FileText, Pencil, CalendarClock, MonitorUp, Presentation, ChevronLeft,
-    ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw, Target, ListFilter
+    ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw, Target
   } from 'lucide-svelte';
   import { notesApi, tasksApi, inboxApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
@@ -218,6 +218,12 @@
     await openEntry(key);
   }
 
+  async function focusAndGo(id: string) {
+    if (!(await flushDraft())) return;
+    chooseFocus(id);
+    await switchView('now');
+  }
+
   function chooseFocus(id: string) {
     focusedTaskId = id;
     try { localStorage.setItem(FOCUS_KEY, id); } catch { /* Focus is still available this session. */ }
@@ -394,7 +400,7 @@
       <button class:rx-current={view === 'now'} onclick={() => { void switchView('now'); }}><CircleDot size={18}/> Agora</button>
       <button class:rx-current={view === 'archive'} onclick={() => { void switchView('archive'); }}><Archive size={18}/> Arquivo</button>
     </nav>
-    <div class="rx-sidebar-foot"><span class="rx-local-dot"></span> Salvo neste computador</div>
+    <div class="rx-sidebar-foot"><span class="rx-local-dot"></span> Dados locais <span class="rx-build">α3</span></div>
   </aside>
 
   <main class="rx-main">
@@ -435,7 +441,7 @@
           <div class="rx-empty-focus">
             <CircleDot size={26}/>
             <h2>Nada pendente agora.</h2>
-            <p>Guarde uma ideia abaixo. Você poderá transformá-la em tarefa quando precisar.</p>
+            <p>Registre uma ideia ou crie uma tarefa no campo abaixo.</p>
           </div>
         {/if}
 
@@ -541,7 +547,7 @@
               <label class="rx-field"><span>Prazo (ainda não envia notificação)</span><input type="datetime-local" value={taskDue} onchange={(e) => onTaskEdit('due', e.currentTarget.value)} onblur={() => { void saveTask(selected.task); }}/></label>
               <p class="rx-task-save" aria-live="polite"><Check size={13}/>{taskSaving ? 'Salvando...' : taskDirty ? 'Alterações pendentes' : 'Salvo automaticamente'}</p>
               <div class="rx-actions">
-                <button class="rx-primary" disabled={busy} onclick={() => { chooseFocus(selected.task.id); void switchView('now'); }}><Target size={16}/> {focusedTaskId === selected.task.id ? 'Em foco' : 'Focar agora'}</button>
+                <button class="rx-primary" disabled={busy} onclick={() => { void focusAndGo(selected.task.id); }}><Target size={16}/> {focusedTaskId === selected.task.id ? 'Em foco' : 'Focar agora'}</button>
                 <button class="rx-subtle" disabled={busy} onclick={() => { void completeTask(selected.task); }}>
                   {#if selected.task.completed_at}<RotateCcw size={16}/> Reabrir{:else}<Circle size={16}/> Concluir tarefa{/if}
                 </button>

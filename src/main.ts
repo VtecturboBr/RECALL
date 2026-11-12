@@ -1,6 +1,7 @@
 import './styles.css';
-import './v05.css';
+
 import './simplified.css';
+import './alpha3.css';
 import App from './App.svelte';
 import { mount } from 'svelte';
 
