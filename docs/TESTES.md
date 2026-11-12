@@ -23,3 +23,16 @@ Não testados neste ambiente:
 - [ ] Falha de gravação exibe erro e preserva o texto.
 - [ ] Quando atalho está ocupado, o aplicativo continua iniciando, e botão Capturar funciona.
 - [ ] Nenhum dado pré-existente da v0.3 é modificado ou perdido.
+
+
+## v0.5 alpha — testes manuais necessários
+
+- [ ] Dados das notas da v0.4 preservados após inicialização.
+- [ ] Criar, editar, concluir, reabrir e excluir tarefas na tela Hoje.
+- [ ] Reabrir o aplicativo e verificar persistência das tarefas.
+- [ ] Capturar uma ideia e confirmar que aparece na Entrada.
+- [ ] Converter ideia em nota ou tarefa e verificar que sai da Entrada.
+- [ ] Confirmar que os cartões flutuantes e lembretes antigos continuam funcionando.
+- [ ] Testar instalação e bandeja no Windows real.
+
+Obs.: o campo de data de tarefas ainda não dispara notificações. A prévia HTML permanece na v0.4.
