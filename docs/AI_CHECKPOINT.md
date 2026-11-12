@@ -45,3 +45,13 @@ O usuário iniciou uma nova fase focada em qualidade, refinamento e continuidade
 ## Atualização do checkpoint
 
 Após cada entrega concreta: registrar branch, commit/PR, funcionalidades modificadas, evidências dos testes, decisões confirmadas, riscos e próxima ação. Não registrar propostas como recursos já implementados.
+
+## Auditoria da Alpha 4 — 12/11/2026
+
+- **PR de diagnóstico (rascunho):** https://github.com/VtecturboBr/RECALL/pull/5, branch `audit/alpha4-workflow-qualidade`, base `feature/v0.5-alpha4-captura-tempo`.
+- **Relatório:** `docs/AUDITORIA_ALPHA4_2026-11-12.md` (19 achados: 4 P1, 11 P2 e 4 P3).
+- **Plano proposto:** `docs/ALPHA4_PLANO_CORRECOES.md` e matriz `docs/ALPHA4_TESTES_MANUAIS.md`.
+- **P1:** fechar nota flutuante mesmo com salvamento rejeitado, conflito de edições sem revisão, estado não confirmado dos lembretes, e ausência de backup/migrações versionadas.
+- **Verificação:** revisão de código concluída; testes Windows interativos, screenshots e novos testes funcionais **não executados na auditoria**. CI da Alpha 4 original e instalador passaram antes da auditoria.
+- **Próxima ação:** revisar diagnóstico, realizar regressão no Windows e começar PR específico de correção de integridade, se autorizado. Nenhum problema foi corrigido pelo PR #5.
+- **Sincronização do workflow:** arquivos `AGENTS.md`, `docs/AI_WORKFLOW.md`, `docs/AI_SKILLS.md`, `docs/AI_CHECKPOINT.md` e `config/ai-workflow.yaml` copiados para a própria branch Alpha 4 no commit `ae771f7` sem modificar código executável.

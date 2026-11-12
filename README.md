@@ -71,3 +71,7 @@ O código foi importado de uma versão experimental. O GitHub Actions aprovou Sv
 - [Configuração portátil](config/ai-workflow.yaml): preferências confirmadas.
 
 A configuração não instala skills e não confirma testes em Windows real; consulte o checkpoint antes de agir.
+
+## Auditoria técnica da Alpha 4
+
+A auditoria completa da versão em desenvolvimento encontra-se em [docs/AUDITORIA_ALPHA4_2026-11-12.md](docs/AUDITORIA_ALPHA4_2026-11-12.md). Veja o [plano de correções](docs/ALPHA4_PLANO_CORRECOES.md) e a [matriz de testes Windows](docs/ALPHA4_TESTES_MANUAIS.md). São documentos de diagnóstico da PR #5; **não representam correções implementadas**.
