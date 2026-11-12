@@ -1,3 +1,16 @@
+## Instalador Windows — v0.5 alpha 1
+- Build automático Windows x64 NSIS, com upload de instalador e SHA-256.
+- Nome visível RECALL, versão 0.5.0-alpha.1, identificador interno anterior preservado.
+- Fluxo de download documentado, sem publicar Release estável.
+
+## v0.5 alpha 1 — Hoje e Caixa de entrada
+- Telas novas, sem estatísticas ou elementos decorativos desnecessários.
+- Tarefas persistidas localmente com data opcional e status de conclusão.
+- Captura rápida direcionada à caixa de entrada.
+- Conversão transacional de ideias em notas ou tarefas.
+- Tabelas aditivas sem excluir dados da versão anterior.
+- Nota: notificações de tarefas e migrações versionadas ainda não implementadas.
+
 # Histórico
 
 ## v0.4 — Captura rápida

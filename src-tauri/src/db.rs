@@ -44,6 +44,9 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     )").execute(&pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_active_notes ON notes (deleted_at, updated_at DESC)").execute(&pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_due_notes ON notes (remind_at) WHERE deleted_at IS NULL AND notified_at IS NULL").execute(&pool).await?;
+    // Safe additive migrations: existing notes from v0.4 are preserved.
+    crate::tasks::initialize(&pool).await?;
+    crate::inbox::initialize(&pool).await?;
     Ok(pool)
 }
 

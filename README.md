@@ -2,9 +2,21 @@
 
 **Sua memória externa — notas, lembretes e foco para Windows.**
 
-Versão importada: **0.4 (captura rápida)**. Projeto em desenvolvimento, com interface minimalista preta e vermelha.
+**Versão principal:** v0.4. **Em desenvolvimento na branch `feature/v0.5`:** v0.5 alpha 1. Interface minimalista preta e vermelha.
 
 > **Estado atual:** o código-fonte ainda não foi validado como executável Windows. Lembretes dependem de o aplicativo estar em execução. A sincronização Android não foi implementada.
+
+## Novidades da v0.5 alpha 1
+
+- **Hoje:** crie, edite e conclua tarefas, destacando uma atividade por vez.
+- **Entrada:** capture ideias sem precisar organizá-las na hora.
+- **Converter:** transforme ideias da Entrada em notas ou tarefas; conversão segura no SQLite.
+- **Captura rápida:** Ctrl + Shift + Espaço salva ideias na Entrada.
+- **Compatibilidade:** novas tabelas SQLite sem remover anotações antigas.
+
+O campo opcional de data das tarefas ainda não gera notificações. Os lembretes existentes da v0.4 continuam vinculados a notas.
+
+**A prévia TESTAR_AGORA.html ainda é da v0.4.** Para ver as telas novas, execute o aplicativo Tauri no Windows.
 
 ## Recursos da v0.4
 
@@ -13,6 +25,10 @@ Versão importada: **0.4 (captura rápida)**. Projeto em desenvolvimento, com in
 - Cartões flutuantes, fixação, pesquisa, foco e cartões de apresentação.
 - Lembretes locais com o processo em execução.
 - Prévia independente em `TESTAR_AGORA.html`, com armazenamento separado no navegador.
+
+## Instalador automático para Windows
+
+A branch feature/v0.5 gera um **instalador Windows x64 (NSIS)** no GitHub Actions, sem exigir Rust ou Node.js no seu computador. Veja [como baixar e instalar](docs/INSTALADOR_WINDOWS.md). É uma **versão alpha** sem assinatura digital, ainda dependente de testes manuais.
 
 ## Executar no Windows
 
@@ -37,13 +53,13 @@ npm run installer
 - `src/`: interface Svelte e TypeScript.
 - `src-tauri/`: aplicativo Rust/Tauri e banco SQLite.
 - `TESTAR_AGORA.html`: prévia executada no navegador.
-- `.github/workflows/ci.yml`: verificação automatizada para Windows, ainda dependente da primeira execução.
+- `.github/workflows/ci.yml`: verificação automatizada para Windows, com execução verificada no GitHub.
 - `docs/`: identidade visual, testes e histórico.
 
 ## Próxima versão
 
-O desenvolvimento da v0.5 seguirá pela branch `feature/v0.5` e por Pull Requests. O planejamento estará nessa branch, sem alterar a versão principal antes de revisão.
+O desenvolvimento da v0.5 ocorre na branch `feature/v0.5` e no PR #1, sem alterar a versão principal antes de revisão. O plano está em `docs/ROADMAP_V0.5.md`.
 
 ## Validação
 
-O código foi importado de uma versão experimental. A compilação, notificações, bandeja, atalho global e instalador ainda precisam de testes reais no Windows. Não considere a v0.4 uma versão de produção.
+O código foi importado de uma versão experimental. O GitHub Actions aprovou Svelte, TypeScript e cargo check no Windows, mas notificações, bandeja, atalho global e instalador ainda precisam de testes interativos no Windows. Não considere a v0.4 uma versão de produção.

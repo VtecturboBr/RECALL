@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# Cancela verificações de commits substituídos na mesma branch.
+concurrency:
+  group: recall-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-check:
     name: Frontend e Rust (Windows)
@@ -35,3 +40,5 @@ jobs:
         run: npm run build
       - name: Verificar Rust/Tauri
         run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Testes de unidade Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
