@@ -52,7 +52,7 @@
 </script>
 
 <svelte:window onkeydown={keyboard} />
-<svelte:head><title>Capturar ideia · Memória Externa</title></svelte:head>
+<svelte:head><title>Capturar ideia · RECALL</title></svelte:head>
 
 <section class="capture-shell" aria-label="Captura rápida">
   <header class="capture-head" data-tauri-drag-region>

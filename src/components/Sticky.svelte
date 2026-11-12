@@ -10,7 +10,7 @@
   let error = $state('');
   let saving = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let dirty = false;
+  let dirty = $state(false);
   async function load() {
     try {
       const value = await notesApi.get(id);
@@ -43,12 +43,12 @@
   async function close() { await persist(); await getCurrentWindow().close(); }
 </script>
 
-<svelte:head><title>Nota flutuante — Memória Externa</title></svelte:head>
+<svelte:head><title>Nota flutuante — RECALL</title></svelte:head>
 <div class="sticky-shell">
   <header class="sticky-header" data-tauri-drag-region><div data-tauri-drag-region><Grip size={15}/><span data-tauri-drag-region>NOTA FLUTUANTE</span></div><button title="Fechar cartão" aria-label="Fechar cartão" onclick={close}><X size={17}/></button></header>
   {#if note}
     <div class="sticky-content"><input aria-label="Título da nota flutuante" value={note.title} placeholder="Título da nota" oninput={(e) => edit('title', e.currentTarget.value)}/><textarea aria-label="Conteúdo da nota flutuante" value={note.body} placeholder="Sua anotação..." oninput={(e) => edit('body', e.currentTarget.value)}></textarea></div>
-    <footer class="sticky-footer"><div><StickyNote size={14}/> Memória Externa</div><span><Check size={12}/> {saving ? 'Salvando' : dirty ? 'Editando' : 'Salva'}</span></footer>
+    <footer class="sticky-footer"><div><StickyNote size={14}/> RECALL</div><span><Check size={12}/> {saving ? 'Salvando' : dirty ? 'Editando' : 'Salva'}</span></footer>
   {:else}<div class="sticky-content loading-sticky">Carregando cartão...</div>{/if}
   {#if error}<div class="sticky-error" role="alert">{error}</div>{/if}
 </div>

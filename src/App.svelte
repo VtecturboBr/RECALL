@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Main from './components/Main.svelte';
+  import Main from './components/Simplified.svelte';
   import Sticky from './components/Sticky.svelte';
   import QuickCapture from './components/QuickCapture.svelte';
   const params = new URLSearchParams(window.location.search);
