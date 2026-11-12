@@ -100,19 +100,6 @@ pub async fn initialize(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-async fn event(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, reminder: &Reminder,
-    kind: &str, at: i64,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO reminder_events(
-        reminder_id,target_type,target_id,kind,occurred_at,scheduled_for
-    ) VALUES(?,?,?,?,?,?)")
-        .bind(&reminder.id).bind(&reminder.target_type).bind(&reminder.target_id)
-        .bind(kind).bind(at).bind(reminder.anchor_at)
-        .execute(&mut **tx).await?;
-    Ok(())
-}
-
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Reminder>, sqlx::Error> {
     sqlx::query_as::<_, Reminder>(&format!(
         "{SELECT} WHERE {ALIVE} AND r.state!='cancelled'
@@ -246,15 +233,26 @@ pub async fn record_dispatch(
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     for id in ids {
-        if let Some(row) = get(pool, id).await? {
-            if row.state != "attention" || row.dispatched_at.is_some() { continue; }
+        // Read through this transaction: the pool has one connection, so
+        // calling get(pool, ...) inside it would deadlock.
+        let row = sqlx::query_as::<_, (String,String,i64,String,Option<i64>)>(
+            "SELECT target_type,target_id,anchor_at,state,dispatched_at
+             FROM reminder_rules WHERE id=?"
+        ).bind(id).fetch_optional(&mut *tx).await?;
+        if let Some((kind, target, anchor, state, dispatched)) = row {
+            if state != "attention" || dispatched.is_some() { continue; }
             sqlx::query("UPDATE reminder_rules SET dispatched_at=?,last_error=?,updated_at=? WHERE id=? AND state='attention'")
                 .bind(if error.is_none(){Some(at)}else{None})
                 .bind(error).bind(at).bind(id).execute(&mut *tx).await?;
-            event(&mut tx, &row, if error.is_some(){"dispatch_failed"}else{"dispatched"}, at).await?;
-            if error.is_none() && row.target_type == "note" {
+            sqlx::query("INSERT INTO reminder_events(
+                reminder_id,target_type,target_id,kind,occurred_at,scheduled_for
+            ) VALUES(?,?,?,?,?,?)")
+                .bind(id).bind(&kind).bind(&target)
+                .bind(if error.is_some() {"dispatch_failed"} else {"dispatched"})
+                .bind(at).bind(anchor).execute(&mut *tx).await?;
+            if error.is_none() && kind == "note" {
                 sqlx::query("UPDATE notes SET notified_at=? WHERE id=? AND deleted_at IS NULL")
-                    .bind(at).bind(&row.target_id).execute(&mut *tx).await?;
+                    .bind(at).bind(&target).execute(&mut *tx).await?;
             }
         }
     }
