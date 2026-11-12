@@ -4,11 +4,11 @@
   import {
     BrainCircuit, CircleDot, Archive, Search, Plus, Check, Circle, Bell,
     FileText, Pencil, CalendarClock, MonitorUp, Presentation, ChevronLeft,
-    ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw
+    ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw, Target, ListFilter
   } from 'lucide-svelte';
   import { notesApi, tasksApi, inboxApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
-  import { buildWorkspace, nextTask, toSlides } from '../lib/workspace';
+  import { buildWorkspace, nextTask, toSlides, searchWorkspace } from '../lib/workspace';
   import type { Note, Task, InboxItem } from '../lib/types';
 
   type View = 'now' | 'archive';
@@ -22,6 +22,10 @@
   let error = $state('');
   let busy = $state(false);
   let sidebarVisible = $state(true);
+  let focusedTaskId = $state<string | null>(null);
+  let captureKind = $state<'idea' | 'task'>('idea');
+  let archiveFilter = $state<'all' | 'note' | 'task' | 'idea'>('all');
+  const FOCUS_KEY = 'recall-selected-focus-task-v1';
 
   let newText = $state('');
   let draftNoteId: string | null = null;
@@ -35,13 +39,19 @@
   let taskTitle = $state('');
   let taskDetails = $state('');
   let taskDue = $state('');
+  let taskDirty = $state(false);
+  let taskSaving = $state(false);
+  let taskSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let taskSaveInFlight: Promise<boolean> | null = null;
   let presenting = $state(false);
   let slideIndex = $state(0);
   let entries = $derived(buildWorkspace(notes, tasks, ideas));
   let selected = $derived(entries.find(item => item.key === selectedKey) ?? null);
-  let matches = $derived(entries.filter(item =>
-    (item.title + ' ' + item.text).toLocaleLowerCase('pt-BR').includes(search.trim().toLocaleLowerCase('pt-BR'))));
-  let currentTask = $derived(nextTask(tasks));
+  let matches = $derived(searchWorkspace(entries, search, archiveFilter));
+  let currentTask = $derived(
+    tasks.find(task => task.id === focusedTaskId && task.deleted_at === null && task.completed_at === null)
+    ?? nextTask(tasks)
+  );
   let otherTasks = $derived(tasks.filter(t =>
     t.deleted_at === null && t.completed_at === null && t.id !== currentTask?.id)
     .sort((a, b) => (a.due_at ?? Infinity) - (b.due_at ?? Infinity) || a.created_at - b.created_at));
@@ -64,6 +74,7 @@
   }
 
   onMount(() => {
+    try { focusedTaskId = localStorage.getItem(FOCUS_KEY); } catch { /* No local storage available. */ }
     let alive = true;
     const unlisteners: Array<() => void> = [];
     void refresh();
@@ -73,8 +84,10 @@
     }
     const onKey = (event: KeyboardEvent) => {
       if (event.ctrlKey && event.key.toLowerCase() === 'k') {
-        event.preventDefault(); view = 'archive';
-        requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.rx-search input')?.focus());
+        event.preventDefault();
+        void switchView('archive').then(() => {
+          if (view === 'archive') requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.rx-search input')?.focus());
+        });
       }
       if (event.ctrlKey && event.key.toLowerCase() === 'n') {
         event.preventDefault(); void captureWindow();
@@ -89,7 +102,9 @@
       unlisteners.forEach(fn => fn());
       window.removeEventListener('keydown', onKey);
       if (saveTimer) clearTimeout(saveTimer);
+      if (taskSaveTimer) clearTimeout(taskSaveTimer);
       if (noteDirty) void flushNote();
+      if (taskDirty && selected?.type === 'task') void saveTask(selected.task);
     };
   });
 
@@ -102,10 +117,15 @@
     if (!newText.trim() || busy) return;
     busy = true;
     try {
-      const idea = await inboxApi.capture(newText);
+      const text = newText.trim();
+      if (captureKind === 'task') {
+        const task = await tasksApi.create(text);
+        if (!currentTask) chooseFocus(task.id);
+      } else {
+        await inboxApi.capture(text);
+      }
       newText = '';
       await refresh();
-      if (view === 'archive') await openEntry('idea:' + idea.id);
     } catch (e) {
       error = 'A anotação não foi salva: ' + String(e);
     } finally { busy = false; }
@@ -151,7 +171,7 @@
   }
 
   async function openEntry(key: string) {
-    if (key !== selectedKey && !(await flushNote())) return;
+    if (key !== selectedKey && !(await flushDraft())) return;
     selectedKey = key;
     presenting = false;
     slideIndex = 0;
@@ -169,46 +189,102 @@
       taskTitle = entry.task.title;
       taskDetails = entry.task.details;
       taskDue = toLocalInput(entry.task.due_at);
+      taskDirty = false;
     }
   }
 
   async function switchView(next: View) {
     if (next === view) return;
-    if (!(await flushNote())) return;
+    if (!(await flushDraft())) return;
     presenting = false;
     view = next;
   }
 
   async function archiveEntry(key: string) {
-    if (!(await flushNote())) return;
+    if (!(await flushDraft())) return;
     view = 'archive';
     await openEntry(key);
   }
 
+  function chooseFocus(id: string) {
+    focusedTaskId = id;
+    try { localStorage.setItem(FOCUS_KEY, id); } catch { /* Focus is still available this session. */ }
+  }
+  function clearFocus() {
+    focusedTaskId = null;
+    try { localStorage.removeItem(FOCUS_KEY); } catch { /* Local storage unavailable. */ }
+  }
+
+  function onTaskEdit(field: 'title' | 'details' | 'due', value: string) {
+    if (field === 'title') taskTitle = value;
+    else if (field === 'details') taskDetails = value;
+    else taskDue = value;
+    taskDirty = true;
+    if (taskSaveTimer) clearTimeout(taskSaveTimer);
+    const id = selected?.type === 'task' ? selected.task.id : null;
+    taskSaveTimer = setTimeout(() => {
+      if (selected?.type === 'task' && selected.task.id === id) void saveTask(selected.task);
+    }, 900);
+  }
+
+  async function flushDraft(): Promise<boolean> {
+    if (selected?.type === 'task') return saveTask(selected.task);
+    return flushNote();
+  }
+
   async function completeTask(task: Task) {
     if (busy) return;
+    if (selected?.type === 'task' && selected.task.id === task.id && !(await flushDraft())) return;
     busy = true;
     try {
       await tasksApi.complete(task.id, task.completed_at === null);
+      if (task.completed_at === null && task.id === focusedTaskId) clearFocus();
       await refresh();
     } catch (e) { error = 'Falha ao alterar tarefa: ' + String(e); }
     finally { busy = false; }
   }
 
-  async function saveTask(task: Task) {
-    if (!taskTitle.trim() || busy) return;
+  async function saveTask(task: Task): Promise<boolean> {
+    if (taskSaveTimer) { clearTimeout(taskSaveTimer); taskSaveTimer = undefined; }
+    if (taskSaveInFlight) {
+      if (!(await taskSaveInFlight)) return false;
+    }
+    if (!taskDirty) return true;
+    if (!taskTitle.trim()) {
+      error = 'O título da tarefa não pode ficar vazio.';
+      return false;
+    }
     const dueAt = taskDue ? new Date(taskDue).getTime() : null;
-    if (dueAt !== null && !Number.isFinite(dueAt)) { error = 'Data inválida.'; return; }
-    busy = true;
-    try {
-      await tasksApi.update(task.id, taskTitle, taskDetails, dueAt);
-      await refresh();
-    } catch (e) { error = 'Falha ao salvar tarefa: ' + String(e); }
-    finally { busy = false; }
+    if (dueAt !== null && !Number.isFinite(dueAt)) {
+      error = 'Data inválida.';
+      return false;
+    }
+    const id = task.id;
+    const title = taskTitle;
+    const details = taskDetails;
+    taskDirty = false;
+    taskSaving = true;
+    const write: Promise<boolean> = tasksApi.update(id, title, details, dueAt)
+      .then(updated => {
+        tasks = tasks.map(t => t.id === updated.id ? updated : t);
+        return true;
+      })
+      .catch(e => {
+        taskDirty = true;
+        error = 'Não foi possível salvar a tarefa. O texto continua aqui: ' + String(e);
+        return false;
+      });
+    taskSaveInFlight = write;
+    const saved = await write;
+    if (taskSaveInFlight === write) taskSaveInFlight = null;
+    taskSaving = false;
+    if (!saved) return false;
+    if (taskDirty) return saveTask(task);
+    return true;
   }
 
   async function updateReminder(note: Note, value: string) {
-    if (!(await flushNote())) return;
+    if (!(await flushDraft())) return;
     const at = value ? new Date(value).getTime() : null;
     if (at !== null && !Number.isFinite(at)) { error = 'Data inválida.'; return; }
     try { await notesApi.remind(note.id, at); await refresh(); }
@@ -240,7 +316,8 @@
 
   async function deleteSelected() {
     if (!selected || busy || !confirm('Excluir este item?')) return;
-    if (!(await flushNote())) return;
+    if (!(await flushDraft())) return;
+    if (selected.type === 'task' && selected.task.id === focusedTaskId) clearFocus();
     busy = true;
     try {
       if (selected.type === 'note') await notesApi.delete(selected.note.id);
@@ -271,7 +348,7 @@
       <button class="rx-icon-button rx-menu" title="Mostrar ou ocultar menu" aria-label="Mostrar ou ocultar menu" onclick={() => sidebarVisible = !sidebarVisible}><Menu size={19}/></button>
       <span class="rx-page-name">{view === 'now' ? 'Agora' : 'Arquivo'}</span>
       <span class="rx-spacer"></span>
-      <button class="rx-top-search" onclick={() => { void switchView('archive').then(() => document.querySelector<HTMLInputElement>('.rx-search input')?.focus()); }} title="Pesquisar (Ctrl+K)" aria-label="Pesquisar"><Search size={18}/></button>
+      <button class="rx-top-search" onclick={() => { void switchView('archive').then(() => { if (view === 'archive') document.querySelector<HTMLInputElement>('.rx-search input')?.focus(); }); }} title="Pesquisar (Ctrl+K)" aria-label="Pesquisar"><Search size={18}/></button>
       <button class="rx-add-button" onclick={() => { void captureWindow(); }}><Plus size={17}/> Capturar</button>
     </header>
 
@@ -297,7 +374,7 @@
             {#if currentTask.due_at}<p class="rx-date"><CalendarClock size={15}/> Prazo: {formatDateTime(currentTask.due_at)}</p>{/if}
             <div class="rx-card-buttons">
               <button class="rx-primary" disabled={busy} onclick={() => { void completeTask(currentTask); }}><Check size={17}/> Concluir</button>
-              <button class="rx-subtle" onclick={() => { void archiveEntry('task:' + currentTask.id); }}><Pencil size={16}/> Editar</button>
+              <button class="rx-subtle" onclick={() => { void archiveEntry('task:' + currentTask.id); }}><Pencil size={16}/> Detalhes</button>
             </div>
           </div>
         {:else}
@@ -315,6 +392,7 @@
               <div class="rx-next-row">
                 <button title="Concluir" aria-label={'Concluir ' + task.title} disabled={busy} onclick={() => { void completeTask(task); }}><Circle size={19}/></button>
                 <button class="rx-next-title" onclick={() => { void archiveEntry('task:' + task.id); }}>{task.title}</button>
+                <button class="rx-focus-link" aria-label={'Focar na tarefa ' + task.title} title="Escolher como foco" onclick={() => chooseFocus(task.id)}><Target size={15}/> Focar</button>
               </div>
             {/each}
             {#if otherTasks.length > 3}<button class="rx-text-link" onclick={() => { void switchView('archive'); }}>Ver todas no arquivo <ArrowRight size={14}/></button>{/if}
@@ -331,11 +409,18 @@
         {/if}
 
         <form class="rx-capture-inline" onsubmit={(e) => { e.preventDefault(); void captureInline(); }}>
-          <label for="rx-capture-now">Não quero esquecer...</label>
-          <div>
-            <input id="rx-capture-now" maxlength="100000" bind:value={newText} placeholder="Escreva uma ideia e guarde..." />
-            <button class="rx-capture-submit" type="submit" aria-label="Guardar ideia" disabled={!newText.trim() || busy}><ArrowRight size={18}/></button>
+          <div class="rx-compose-head">
+            <label for="rx-capture-now">Registrar algo</label>
+            <div class="rx-compose-modes" role="group" aria-label="Tipo de registro">
+              <button type="button" class:rx-active={captureKind === 'idea'} aria-pressed={captureKind === 'idea'} onclick={() => captureKind = 'idea'}>Ideia</button>
+              <button type="button" class:rx-active={captureKind === 'task'} aria-pressed={captureKind === 'task'} onclick={() => captureKind = 'task'}>Tarefa</button>
+            </div>
           </div>
+          <div>
+            <input id="rx-capture-now" maxlength="250" bind:value={newText} placeholder={captureKind === 'idea' ? 'Anote antes de esquecer...' : 'Qual é a próxima ação?'} />
+            <button class="rx-capture-submit" type="submit" aria-label={captureKind === 'idea' ? 'Guardar ideia' : 'Criar tarefa'} title={captureKind === 'idea' ? 'Guardar ideia' : 'Criar tarefa'} disabled={!newText.trim() || busy}><ArrowRight size={18}/></button>
+          </div>
+          <p class="rx-compose-tip">Enter para salvar · Ctrl+Shift+Espaço para anotações longas.</p>
         </form>
       </section>
     {:else}
@@ -344,7 +429,14 @@
           <div class="rx-items-top">
             <h1>Seu arquivo</h1>
             <p>Notas, tarefas e ideias no mesmo lugar.</p>
-            <label class="rx-search"><Search size={17}/><input aria-label="Pesquisar tudo" type="search" placeholder="Buscar qualquer coisa..." bind:value={search}/></label>
+            <label class="rx-search"><Search size={17}/><input aria-label="Pesquisar tudo" type="search" placeholder="Buscar qualquer coisa..." bind:value={search}/>{#if search}<button type="button" aria-label="Limpar pesquisa" title="Limpar pesquisa" onclick={() => search = ''}><X size={15}/></button>{/if}</label>
+            <div class="rx-filters" role="group" aria-label="Filtrar arquivo">
+              <button class:rx-active={archiveFilter === 'all'} aria-pressed={archiveFilter === 'all'} onclick={() => archiveFilter = 'all'}>Tudo</button>
+              <button class:rx-active={archiveFilter === 'note'} aria-pressed={archiveFilter === 'note'} onclick={() => archiveFilter = 'note'}>Notas</button>
+              <button class:rx-active={archiveFilter === 'task'} aria-pressed={archiveFilter === 'task'} onclick={() => archiveFilter = 'task'}>Tarefas</button>
+              <button class:rx-active={archiveFilter === 'idea'} aria-pressed={archiveFilter === 'idea'} onclick={() => archiveFilter = 'idea'}>Ideias</button>
+            </div>
+            <p class="rx-results">{matches.length} {matches.length === 1 ? 'resultado' : 'resultados'}</p>
           </div>
           <div class="rx-item-list">
             {#if matches.length === 0}
@@ -390,11 +482,12 @@
           {:else if selected.type === 'task'}
             <div class="rx-details">
               <div class="rx-detail-head"><span>TAREFA</span><button class="rx-icon-button" onclick={() => { void deleteSelected(); }} title="Excluir tarefa" aria-label="Excluir tarefa"><Trash2 size={17}/></button></div>
-              <label class="rx-field"><span>Título</span><input maxlength="250" bind:value={taskTitle}/></label>
-              <label class="rx-field"><span>Próximo passo ou detalhes</span><textarea rows="7" maxlength="100000" bind:value={taskDetails} placeholder="O que preciso fazer?"></textarea></label>
-              <label class="rx-field"><span>Prazo (ainda não envia notificação)</span><input type="datetime-local" bind:value={taskDue}/></label>
+              <label class="rx-field"><span>Título</span><input maxlength="250" value={taskTitle} oninput={(e) => onTaskEdit('title', e.currentTarget.value)} onblur={() => { void saveTask(selected.task); }}/></label>
+              <label class="rx-field"><span>Próximo passo ou detalhes</span><textarea rows="7" maxlength="100000" value={taskDetails} oninput={(e) => onTaskEdit('details', e.currentTarget.value)} onblur={() => { void saveTask(selected.task); }} placeholder="O que preciso fazer?"></textarea></label>
+              <label class="rx-field"><span>Prazo (ainda não envia notificação)</span><input type="datetime-local" value={taskDue} onchange={(e) => onTaskEdit('due', e.currentTarget.value)} onblur={() => { void saveTask(selected.task); }}/></label>
+              <p class="rx-task-save" aria-live="polite"><Check size={13}/>{taskSaving ? 'Salvando...' : taskDirty ? 'Alterações pendentes' : 'Salvo automaticamente'}</p>
               <div class="rx-actions">
-                <button class="rx-primary" disabled={busy || !taskTitle.trim()} onclick={() => { void saveTask(selected.task); }}><Check size={16}/> Salvar alterações</button>
+                <button class="rx-primary" disabled={busy} onclick={() => { chooseFocus(selected.task.id); void switchView('now'); }}><Target size={16}/> {focusedTaskId === selected.task.id ? 'Em foco' : 'Focar agora'}</button>
                 <button class="rx-subtle" disabled={busy} onclick={() => { void completeTask(selected.task); }}>
                   {#if selected.task.completed_at}<RotateCcw size={16}/> Reabrir{:else}<Circle size={16}/> Concluir tarefa{/if}
                 </button>
@@ -402,7 +495,7 @@
             </div>
           {:else}
             <div class="rx-details">
-              <div class="rx-detail-head"><span>NOTA</span><button class="rx-icon-button" onclick={() => { void deleteSelected(); }} title="Excluir nota" aria-label="Excluir nota"><Trash2 size={17}/></button></div>
+              <div class="rx-detail-head"><span>{selected.note.kind === 'presentation' ? 'APRESENTAÇÃO' : 'NOTA'}</span><button class="rx-icon-button" onclick={() => { void deleteSelected(); }} title="Excluir nota" aria-label="Excluir nota"><Trash2 size={17}/></button></div>
               <input class="rx-note-title" aria-label="Título da nota" placeholder="Sem título" value={noteTitle} oninput={(e) => onNoteEdit('title', e.currentTarget.value)} onblur={() => { void flushNote(); }}/>
               <textarea class="rx-note-body" aria-label="Texto da nota" placeholder="Escreva aqui..." value={noteBody} oninput={(e) => onNoteEdit('body', e.currentTarget.value)} onblur={() => { void flushNote(); }}></textarea>
               <div class="rx-save-indicator"><Check size={13}/>{noteSaving ? 'Salvando...' : noteDirty ? 'Alterações pendentes' : 'Salvo automaticamente'}</div>
@@ -412,7 +505,7 @@
                   <button class="rx-subtle" onclick={() => { void floatNote(selected.note); }}><MonitorUp size={16}/> Abrir cartão flutuante</button>
                   <button class="rx-subtle" onclick={() => { void flushNote().then(ok => { if (ok) { slideIndex = 0; presenting = true; } }); }}><Presentation size={16}/> Apresentar</button>
                 </div>
-                <p class="rx-hint">Para separar uma apresentação em cartões, escreva <code>---</code> em uma linha isolada.</p>
+                <p class="rx-hint">Opcional: separe cartões de apresentação com <code>---</code> em uma linha isolada.</p>
               </div>
             </div>
           {/if}
