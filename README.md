@@ -47,3 +47,9 @@ O desenvolvimento da v0.5 seguirá pela branch `feature/v0.5` e por Pull Request
 ## Validação
 
 O código foi importado de uma versão experimental. A compilação, notificações, bandeja, atalho global e instalador ainda precisam de testes reais no Windows. Não considere a v0.4 uma versão de produção.
+
+## Workflow para IA (ChatGPT, Codex e outras ferramentas)
+
+As preferências de colaboração do RECALL estão documentadas em [docs/AI_WORKFLOW.md](docs/AI_WORKFLOW.md). Agentes de código devem começar por [AGENTS.md](AGENTS.md), consultar o [checkpoint](docs/AI_CHECKPOINT.md) e carregar apenas as [skills relevantes](docs/AI_SKILLS.md).
+
+Esses arquivos registram instruções e continuidade; não instalam skills externas, concedem permissões ou sincronizam automaticamente conversas.
