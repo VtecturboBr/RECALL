@@ -346,6 +346,7 @@ pub fn run() {
             // While the EXE or computer is off, Windows toasts cannot be sent.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                let mut last_bulk_toast_at: i64 = 0;
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
                 loop {
                     interval.tick().await;
@@ -359,6 +360,12 @@ pub fn run() {
                     // After a long offline period, avoid a flood of individual toasts:
                     // one short summary for a batch, while each item stays in the inbox.
                     if due.len() > 3 || due.iter().any(|r| r.due_at < now - 6 * 60 * 60 * 1000) {
+                        if now - last_bulk_toast_at < 60 * 60 * 1000 {
+                            // All occurrences were already claimed and remain
+                            // visible in the attention inbox. No repeat toast.
+                            continue;
+                        }
+                        last_bulk_toast_at = now;
                         let ids: Vec<String> = due.iter().map(|r| r.id.clone()).collect();
                         let body = format!("{} lembrete(s) precisam da sua atenção. Abra o RECALL.", due.len());
                         let result = handle.notification().builder()

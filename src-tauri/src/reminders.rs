@@ -427,6 +427,31 @@ mod tests {
         pool2.close().await; let _=fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn recurrence_weekly_and_leap_year_calendar() {
+        let base=Local.with_ymd_and_hms(2024,2,29,9,15,0).single().unwrap().timestamp_millis();
+        let now=Local.with_ymd_and_hms(2024,3,6,9,30,0).single().unwrap().timestamp_millis();
+        let week=Local.timestamp_millis_opt(next_occurrence(base,"weekly",now).unwrap()).single().unwrap();
+        assert_eq!((week.month(),week.day(),week.hour()),(3,7,9));
+        let feb=Local.timestamp_millis_opt(next_occurrence(base,"monthly",now).unwrap()).single().unwrap();
+        assert_eq!((feb.month(),feb.day()),(3,29));
+    }
+
+    #[tokio::test]
+    async fn attention_survives_restart_without_another_claim() {
+        let dir=folder();let path=dir.join("memoria.sqlite");
+        let pool=db::connect(&path).await.unwrap();
+        let task=tasks::create(&pool,"Pendência").await.unwrap();
+        schedule(&pool,"task",&task.id,now_ms()-1000,"none").await.unwrap();
+        assert_eq!(claim_due(&pool,now_ms()).await.unwrap().len(),1);
+        pool.close().await;
+        let again=db::connect(&path).await.unwrap();
+        assert!(claim_due(&again,now_ms()).await.unwrap().is_empty());
+        let alerts=list(&again).await.unwrap();
+        assert_eq!(alerts.iter().filter(|r| r.state=="attention").count(),1);
+        again.close().await; let _=fs::remove_dir_all(dir);
+    }
+
     #[tokio::test]
     async fn completed_task_never_triggers() {
         let dir=folder();let path=dir.join("memoria.sqlite");

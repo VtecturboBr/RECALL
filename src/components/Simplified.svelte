@@ -516,11 +516,21 @@
     finally { reminderBusy = false; }
   }
 
+  function updateReminderEditor(item: Reminder) {
+    const entry = selected;
+    if (!entry || entry.type === 'idea') return;
+    const selectedId = entry.type === 'task' ? entry.task.id : entry.note.id;
+    if (entry.type !== item.target_type || selectedId !== item.target_id) return;
+    reminderAt = item.state === 'done' ? '' : toLocalInput(item.due_at);
+    reminderRepeat = item.state === 'done' ? 'none' : item.repeat_rule;
+  }
+
   async function snoozeReminder(item: Reminder, minutes: 5 | 15 | 30 | 60 | 180 | 1440) {
     if (reminderBusy || !(await flushDraft())) return;
     reminderBusy = true;
     try {
-      await remindersApi.snooze(item.id, minutes);
+      const result = await remindersApi.snooze(item.id, minutes);
+      updateReminderEditor(result);
       await refresh();
     } catch (e) { error = 'Não foi possível adiar: ' + String(e); }
     finally { reminderBusy = false; }
@@ -530,7 +540,8 @@
     if (reminderBusy || !(await flushDraft())) return;
     reminderBusy = true;
     try {
-      await remindersApi.acknowledge(item.id);
+      const result = await remindersApi.acknowledge(item.id);
+      updateReminderEditor(result);
       await refresh();
     } catch (e) { error = 'Não foi possível concluir o lembrete: ' + String(e); }
     finally { reminderBusy = false; }
