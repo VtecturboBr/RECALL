@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Note, Task, InboxItem } from './types';
+import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from './types';
 
 export const notesApi = {
   list: () => invoke<Note[]>('list_notes'),
@@ -56,4 +56,17 @@ export interface BackupInfo {
 export const backupsApi = {
   create: () => invoke<BackupInfo>('create_data_backup'),
   list: () => invoke<BackupInfo[]>('list_data_backups')
+};
+
+export const remindersApi = {
+  list: () => invoke<Reminder[]>('list_reminders'),
+  history: () => invoke<ReminderEvent[]>('list_reminder_events'),
+  schedule: (targetType: 'note' | 'task', targetId: string, dueAt: number, repeatRule: ReminderRule) =>
+    invoke<Reminder>('schedule_reminder', { targetType, targetId, dueAt, repeatRule }),
+  cancel: (targetType: 'note' | 'task', targetId: string) =>
+    invoke<void>('cancel_reminder', { targetType, targetId }),
+  snooze: (id: string, minutes: 5 | 15 | 30 | 60 | 180 | 1440) =>
+    invoke<Reminder>('snooze_reminder', { id, minutes }),
+  acknowledge: (id: string) =>
+    invoke<Reminder>('acknowledge_reminder', { id })
 };

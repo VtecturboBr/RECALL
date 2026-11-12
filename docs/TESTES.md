@@ -57,3 +57,14 @@ Obs.: o campo de data de tarefas ainda não dispara notificações. A prévia HT
 - [ ] Reiniciar e confirmar persistência do planejamento.
 - [ ] Captura global em modo Tarefa preserva o rascunho em caso de erro.
 - [ ] Prazos da tarefa não geram notificações nesta versão.
+
+## Alpha 5 — Lembretes 2.0
+
+- [ ] Migração a partir da Alpha 4.1 com backup pré-reminders, sem apagar dados.
+- [ ] Aviso para nota e tarefa, com app na bandeja.
+- [ ] Recuperação de aviso vencido com computador/app totalmente desligado.
+- [ ] Adiamento, repetição, resolução e histórico persistem após reiniciar.
+- [ ] Sem alertas duplicados após reiniciar sem ação do usuário.
+- [ ] Lote de múltiplos avisos vencidos gera resumo e cada item fica visível.
+- [ ] Tarefa concluída/deletada não notifica.
+- [ ] Sem mensagens falsas de recebimento confirmado pelo Windows.

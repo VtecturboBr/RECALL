@@ -1,0 +1,35 @@
+/* Lembretes 2.0 — compact, accessible, within Agora and Arquivo */
+.rx-reminders-v2{margin:28px 0 5px;padding:18px;border:1px solid #373038;background:#17151b;border-radius:13px}
+.rx-reminder-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.rx-reminder-heading h3{display:flex;align-items:center;gap:9px;margin:0;font-size:14px;color:#f5e7ed}
+.rx-reminder-heading h3 svg{color:#f05a79}
+.rx-reminder-count{background:#532331;color:#ffd6e0;border-radius:24px;padding:5px 9px;font-size:11px}
+.rx-reminder-attention{border:1px solid #623747;background:#261c25;border-radius:10px;padding:12px;margin-bottom:9px}
+.rx-reminder-title{display:flex;flex-direction:column;align-items:flex-start;gap:4px;border:0;background:none;color:#f1e8ec;padding:0;text-align:left;width:100%}
+.rx-reminder-title strong{font-size:13px}
+.rx-reminder-title small{font-size:11px;color:#bcb0b9}
+.rx-notification-error{color:#f6b2c2!important}
+.rx-reminder-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.rx-reminder-actions button{display:inline-flex;align-items:center;gap:6px;border:1px solid #54414a;background:#332631;color:#e5d4de;border-radius:8px;padding:8px 11px;font-size:11px}
+.rx-reminder-actions button:hover:not(:disabled){border-color:#ab6178;background:#51303e}
+.rx-reminder-actions button:disabled{opacity:.55}
+.rx-reminder-actions .rx-resolve-reminder{background:#3b2930;border-color:#8d5468;color:#fff}
+.rx-reminder-section-label{font-size:10px;letter-spacing:1.4px;font-weight:700;color:#b8a3ae;margin:20px 0 9px}
+.rx-reminder-upcoming{border:0;border-top:1px solid #39303a;background:none;color:#e0d6df;padding:11px 4px;display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px;text-align:left}
+.rx-reminder-upcoming span{display:flex;align-items:center;gap:8px;font-size:12px}
+.rx-reminder-upcoming small{color:#b7a9b5;font-size:11px;white-space:nowrap}
+.rx-more-reminders{padding:8px 0;background:none;border:0;color:#eb9db0;font-size:12px}
+.rx-reminder-history{margin-top:18px;border-top:1px solid #413342;padding-top:12px}
+.rx-reminder-history summary{cursor:pointer;color:#c3abb8;font-size:12px}
+.rx-reminder-history>div{display:flex;gap:12px;justify-content:space-between;padding:9px 4px;border-bottom:1px solid #302832;font-size:11px;color:#d0c1ca}
+.rx-reminder-history small{font-size:10px;color:#a99daa}
+.rx-reminder-editor{margin:16px 0 20px;padding:16px;border:1px solid #43333f;background:#1b1920;border-radius:10px}
+.rx-reminder-editor h3{display:flex;align-items:center;gap:8px;color:#eed5dd;margin:0 0 7px;font-size:14px}
+.rx-reminder-editor>p{color:#b7a9b4;line-height:1.5;font-size:12px;margin:0 0 14px}
+.rx-reminder-editor .rx-field{display:block;margin-bottom:12px}
+.rx-reminder-editor .rx-field>span{display:block;margin-bottom:7px}
+.rx-reminder-editor input,.rx-reminder-editor select{width:100%;max-width:340px;min-height:38px;border:1px solid #61505e;border-radius:7px;background:#231f29;color:#fff;padding:8px 10px;color-scheme:dark;font-size:12px}
+.rx-reminder-editor .rx-reminder-state{color:#dda5b8;font-size:11px;margin-top:6px}
+.rx-reminder-hint{display:block;color:#a7a0ab;font-size:11px;line-height:1.5;margin-top:12px}
+.rx-reminders-v2 button:focus-visible,.rx-reminder-editor button:focus-visible,.rx-reminder-editor select:focus-visible{outline:2px solid #f08ba5;outline-offset:2px}
+@media(max-width:750px){.rx-reminder-upcoming{align-items:flex-start;flex-direction:column;gap:4px}.rx-reminders-v2{padding:13px}}
