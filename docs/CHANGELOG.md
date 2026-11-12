@@ -1,3 +1,11 @@
+## v0.5 alpha 4 — Captura inteligente e organização temporal
+- Datas em português no fim da tarefa: hoje, amanhã, depois de amanhã, dd/mm e algum dia.
+- Prévia explícita antes de confirmar a captura.
+- Planejamento Hoje/Depois/Algum dia, com promoção automática por data.
+- Nova tabela task_plans, sem alterar notas e tarefas anteriores.
+- Captura global permite criar tarefa ou guardar ideia.
+- Prazos ainda informativos, sem notificações automáticas.
+
 ## v0.5 alpha 3 — Refinamento da experiência
 - Captura direta de tarefa ou ideia na tela Agora.
 - Foco escolhido pelo usuário, persistido localmente.

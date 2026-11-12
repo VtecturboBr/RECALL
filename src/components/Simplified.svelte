@@ -246,7 +246,7 @@
     if (busy || !(await flushDraft())) return;
     busy = true;
     try {
-      await tasksApi.plan(task.id, bucket, bucket === 'later' && task.bucket === 'later' ? task.planned_for : null);
+      await tasksApi.plan(task.id, bucket, bucket === 'later' && taskPeriod(task, clock) === 'later' ? task.planned_for : null);
       if (bucket !== 'today' && focusedTaskId === task.id) clearFocus();
       await refresh();
     } catch (e) { error = 'Não foi possível organizar a tarefa: ' + String(e); }

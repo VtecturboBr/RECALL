@@ -47,3 +47,13 @@ Obs.: o campo de data de tarefas ainda não dispara notificações. A prévia HT
 - [ ] Busca por "reuniao" encontra "Reunião"; filtros exibem apenas o tipo escolhido.
 - [ ] Captura rápida, lembretes de notas e cartões flutuantes continuam funcionando.
 - [ ] Notas antigas preservadas após instalação sobre a Alpha 2.
+
+## Alpha 4 — planejamento temporal
+- [ ] Testar "Revisar amanhã às 15h" e conferir a prévia.
+- [ ] Datas inválidas e anos passados não devem ser reconhecidos.
+- [ ] Criar tarefas para Depois e Algum dia sem ocupar o foco de Agora.
+- [ ] Tarefas antigas permanecem em Hoje e notas não são alteradas.
+- [ ] Definir data de retorno de Depois e verificar entrada em Hoje.
+- [ ] Reiniciar e confirmar persistência do planejamento.
+- [ ] Captura global em modo Tarefa preserva o rascunho em caso de erro.
+- [ ] Prazos da tarefa não geram notificações nesta versão.
