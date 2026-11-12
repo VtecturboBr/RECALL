@@ -1,0 +1,9 @@
+/* RECALL integrity: visible backup result and conflict actions */
+.rx-backup-result,.rx-conflict{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 18px;border-bottom:1px solid #385a47;background:#14241c;color:#b4edc5;font-size:12px;overflow-wrap:anywhere}
+.rx-backup-result span{flex:1}
+.rx-backup-result button{border:0;background:transparent;color:inherit;padding:5px;display:grid;place-items:center}
+.rx-conflict{background:#332027;border-bottom-color:#81475b;color:#ffceda;line-height:1.6}
+.rx-conflict button,.sticky-copy-button{background:#4f2633;border:1px solid #a65d72;color:#fff;border-radius:7px;padding:9px 12px;font-size:12px;cursor:pointer}
+.rx-conflict button:hover,.sticky-copy-button:hover{background:#703448}
+.sticky-copy-button{display:flex;align-items:center;gap:7px;margin-top:9px}
+.sticky-error{line-height:1.5}
