@@ -1,6 +1,7 @@
 """Tests for SQLite-safe offline RECALL restore, no extra dependencies."""
 import sqlite3
 import tempfile
+from contextlib import closing
 import unittest
 from pathlib import Path
 
@@ -8,13 +9,14 @@ from restore_backup import RestoreError, restore_database, verify_database
 
 
 def make_database(path: Path, text: str) -> None:
-    with sqlite3.connect(path) as db:
-        db.execute("CREATE TABLE notes(id TEXT PRIMARY KEY, title TEXT NOT NULL)")
-        db.execute("INSERT INTO notes(id,title) VALUES('n1',?)", (text,))
+    with closing(sqlite3.connect(path)) as db:
+        with db:
+            db.execute("CREATE TABLE notes(id TEXT PRIMARY KEY, title TEXT NOT NULL)")
+            db.execute("INSERT INTO notes(id,title) VALUES('n1',?)", (text,))
 
 
 def title(path: Path) -> str:
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         return db.execute("SELECT title FROM notes WHERE id='n1'").fetchone()[0]
 
 

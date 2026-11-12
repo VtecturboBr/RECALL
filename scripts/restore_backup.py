@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from contextlib import closing
 import os
 import sqlite3
 import subprocess
@@ -46,7 +47,7 @@ def verify_database(path: Path) -> dict[str, int]:
     if not path.is_file():
         raise RestoreError(f"Arquivo SQLite não encontrado: {path}")
     try:
-        with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as connection:
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
             result = connection.execute("PRAGMA quick_check").fetchone()
             if result is None or result[0] != "ok":
                 raise RestoreError(f"Falha na integridade do SQLite: {result}")
@@ -71,8 +72,8 @@ def snapshot(source: Path, destination: Path) -> None:
     if destination.exists():
         raise RestoreError(f"Arquivo de destino já existe: {destination}")
     try:
-        with sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True) as source_db:
-            with sqlite3.connect(str(destination)) as dest_db:
+        with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as source_db:
+            with closing(sqlite3.connect(str(destination))) as dest_db:
                 source_db.backup(dest_db)
         verify_database(destination)
     except Exception:
