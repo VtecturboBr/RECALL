@@ -36,6 +36,12 @@
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let saveInFlight: Promise<boolean> | null = null;
 
+  let ideaText = $state('');
+  let ideaDirty = $state(false);
+  let ideaSaving = $state(false);
+  let ideaSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let ideaSaveInFlight: Promise<boolean> | null = null;
+
   let taskTitle = $state('');
   let taskDetails = $state('');
   let taskDue = $state('');
@@ -103,6 +109,8 @@
       window.removeEventListener('keydown', onKey);
       if (saveTimer) clearTimeout(saveTimer);
       if (taskSaveTimer) clearTimeout(taskSaveTimer);
+      if (ideaSaveTimer) clearTimeout(ideaSaveTimer);
+      if (ideaDirty && selected?.type === 'idea') void saveIdea(selected.idea);
       if (noteDirty) void flushNote();
       if (taskDirty && selected?.type === 'task') void saveTask(selected.task);
     };
@@ -185,6 +193,10 @@
       draftNoteId = null;
       noteDirty = false;
     }
+    if (entry?.type === 'idea') {
+      ideaText = entry.idea.text;
+      ideaDirty = false;
+    }
     if (entry?.type === 'task') {
       taskTitle = entry.task.title;
       taskDetails = entry.task.details;
@@ -227,8 +239,50 @@
     }, 900);
   }
 
+  function onIdeaEdit(value: string) {
+    ideaText = value;
+    ideaDirty = true;
+    if (ideaSaveTimer) clearTimeout(ideaSaveTimer);
+    const id = selected?.type === 'idea' ? selected.idea.id : null;
+    ideaSaveTimer = setTimeout(() => {
+      if (selected?.type === 'idea' && selected.idea.id === id) void saveIdea(selected.idea);
+    }, 900);
+  }
+
+  async function saveIdea(idea: InboxItem): Promise<boolean> {
+    if (ideaSaveTimer) { clearTimeout(ideaSaveTimer); ideaSaveTimer = undefined; }
+    if (ideaSaveInFlight && !(await ideaSaveInFlight)) return false;
+    if (!ideaDirty) return true;
+    if (!ideaText.trim()) {
+      error = 'A ideia não pode ficar vazia.';
+      return false;
+    }
+    const id = idea.id;
+    const value = ideaText;
+    ideaDirty = false;
+    ideaSaving = true;
+    const write: Promise<boolean> = inboxApi.update(id, value)
+      .then(updated => {
+        ideas = ideas.map(i => i.id === updated.id ? updated : i);
+        return true;
+      })
+      .catch(e => {
+        ideaDirty = true;
+        error = 'Não foi possível salvar a ideia. O texto continua aqui: ' + String(e);
+        return false;
+      });
+    ideaSaveInFlight = write;
+    const ok = await write;
+    if (ideaSaveInFlight === write) ideaSaveInFlight = null;
+    ideaSaving = false;
+    if (!ok) return false;
+    if (ideaDirty) return saveIdea(idea);
+    return true;
+  }
+
   async function flushDraft(): Promise<boolean> {
     if (selected?.type === 'task') return saveTask(selected.task);
+    if (selected?.type === 'idea') return saveIdea(selected.idea);
     return flushNote();
   }
 
@@ -298,7 +352,7 @@
   }
 
   async function convertIdea(item: InboxItem, target: 'note' | 'task') {
-    if (busy) return;
+    if (busy || !(await flushDraft())) return;
     busy = true;
     try {
       if (target === 'note') {
@@ -471,9 +525,9 @@
           {:else if selected.type === 'idea'}
             <div class="rx-details">
               <div class="rx-detail-head"><span>IDEIA GUARDADA</span><button class="rx-icon-button" onclick={() => { void deleteSelected(); }} title="Descartar ideia" aria-label="Descartar ideia"><Trash2 size={17}/></button></div>
-              <h2>{selected.title}</h2>
-              <div class="rx-idea-text">{selected.idea.text}</div>
-              <p class="rx-hint">Sua ideia já está salva. Não precisa classificá-la agora.</p>
+              <label class="rx-field"><span>Ideia</span><textarea class="rx-edit-idea" rows="9" maxlength="100000" value={ideaText} oninput={(e) => onIdeaEdit(e.currentTarget.value)} onblur={() => { void saveIdea(selected.idea); }} placeholder="Escreva o que você quer lembrar..."></textarea></label>
+              <p class="rx-task-save" aria-live="polite"><Check size={13}/>{ideaSaving ? 'Salvando...' : ideaDirty ? 'Alterações pendentes' : 'Salvo automaticamente'}</p>
+              <p class="rx-hint">Você pode editar e guardar aqui, sem transformar em outra coisa.</p>
               <div class="rx-actions">
                 <button class="rx-primary" disabled={busy} onclick={() => { void convertIdea(selected.idea, 'note'); }}><FileText size={16}/> Editar como nota</button>
                 <button class="rx-subtle" disabled={busy} onclick={() => { void convertIdea(selected.idea, 'task'); }}><Check size={16}/> Transformar em tarefa</button>
