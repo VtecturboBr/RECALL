@@ -26,6 +26,10 @@ O campo opcional de data das tarefas ainda não gera notificações. Os lembrete
 - Lembretes locais com o processo em execução.
 - Prévia independente em `TESTAR_AGORA.html`, com armazenamento separado no navegador.
 
+## Instalador automático para Windows
+
+A branch feature/v0.5 gera um **instalador Windows x64 (NSIS)** no GitHub Actions, sem exigir Rust ou Node.js no seu computador. Veja [como baixar e instalar](docs/INSTALADOR_WINDOWS.md). É uma **versão alpha** sem assinatura digital, ainda dependente de testes manuais.
+
 ## Executar no Windows
 
 Instale [Node.js LTS](https://nodejs.org/), [Rust](https://rustup.rs/) e os [pré-requisitos do Tauri no Windows](https://v2.tauri.app/start/prerequisites/) (incluindo MSVC Build Tools e WebView2).

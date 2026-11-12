@@ -1,0 +1,69 @@
+name: Gerar instalador RECALL Windows
+
+on:
+  push:
+    branches:
+      - 'feature/v0.5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-recall-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-installer:
+    name: Instalador Windows x64 (NSIS)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Configurar Rust (Windows MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Cache da compilacao Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+      - name: Instalar dependencias da interface
+        run: npm install --no-audit --no-fund
+      - name: Verificar Svelte e TypeScript
+        run: npm run check
+      - name: Executar testes Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - name: Gerar instalador RECALL NSIS
+        run: npm run installer -- --bundles nsis
+      - name: Verificar arquivo e gerar SHA-256
+        shell: pwsh
+        run: |
+          $folder = "src-tauri/target/release/bundle/nsis"
+          $installers = @(Get-ChildItem -Path $folder -Filter "*-setup.exe" -File -ErrorAction SilentlyContinue)
+          if ($installers.Count -ne 1) {
+            throw "Esperado 1 instalador NSIS, encontrados $($installers.Count)"
+          }
+          $installer = $installers[0]
+          if ($installer.Length -lt 1048576) {
+            throw "O instalador parece incompleto (menor que 1 MB)"
+          }
+          $hash = (Get-FileHash -Path $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content -Path (Join-Path $folder "SHA256SUMS.txt") -Encoding ascii
+          Write-Host "Instalador: $($installer.Name) ($($installer.Length) bytes)"
+          Write-Host "SHA-256: $hash"
+      - name: Publicar instalador para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: RECALL-v0.5-alpha1-Windows-x64
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

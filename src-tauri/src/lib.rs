@@ -169,11 +169,11 @@ pub fn run() {
                 }
 
                 let capture_item = MenuItem::with_id(app, "capture", "Capturar ideia  (Ctrl+Shift+Espaço)", true, None::<&str>)?;
-                let show_item = MenuItem::with_id(app, "open", "Abrir Memória Externa", true, None::<&str>)?;
+                let show_item = MenuItem::with_id(app, "open", "Abrir RECALL", true, None::<&str>)?;
                 let exit_item = MenuItem::with_id(app, "quit", "Sair do aplicativo", true, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&capture_item, &show_item, &exit_item])?;
                 let mut builder = TrayIconBuilder::new()
-                    .tooltip("Memória Externa — lembretes ativos")
+                    .tooltip("RECALL — lembretes ativos")
                     .menu(&menu)
                     .on_menu_event(|app, event| match event.id().as_ref() {
                         "capture" => { if let Err(e) = reveal_capture(app) { eprintln!("Falha ao abrir captura: {e}"); } }
@@ -240,5 +240,5 @@ pub fn run() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("Não foi possível iniciar a Memória Externa");
+        .expect("Não foi possível iniciar o RECALL");
 }
