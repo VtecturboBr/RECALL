@@ -4,6 +4,17 @@
 
 Evoluir o RECALL de bloco de notas para uma **memória externa** simples: capturar, lembrar, focar e retomar.
 
+## Primeira entrega em desenvolvimento — alpha 1
+
+- [x] CI da v0.4 verificado no GitHub (Windows: frontend e Rust).
+- [x] Tabelas SQLite para tarefas e caixa de entrada sem apagar notas anteriores.
+- [x] Tela Hoje com próxima tarefa em destaque e operações básicas.
+- [x] Caixa de entrada e conversão transacional em nota ou tarefa.
+- [x] Captura rápida direcionada para Entrada.
+- [ ] Validação CI da v0.5.
+- [ ] Validação manual dos fluxos no Windows real.
+- [ ] Migrações versionadas, backups, recorrência e lembretes 2.0.
+
 ## Etapas
 
 1. **Base estável:** validar compilação Tauri Windows, ícones, permissões, bandeja e atalho global. Corrigir erros antes de alterar o banco.
