@@ -1,6 +1,7 @@
 mod db;
 mod tasks;
 mod inbox;
+mod reminders;
 
 use sqlx::SqlitePool;
 use tauri::{Emitter, Manager};
@@ -89,13 +90,24 @@ async fn set_note_pin(state: tauri::State<'_, AppState>, app: tauri::AppHandle, 
 }
 #[tauri::command]
 async fn set_note_reminder(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, remind_at: Option<i64>) -> Result<db::Note, String> {
-    let note = db::set_reminder(&state.pool, &id, remind_at).await.map_err(|e| e.to_string())?;
-    let _ = app.emit("notes:changed", &note.id);
+    if let Some(at) = remind_at {
+        if !reminders::valid_date(at) { return Err("Data inválida".into()); }
+        reminders::schedule(&state.pool, "note", &id, at, "none")
+            .await.map_err(|e| e.to_string())?;
+    } else {
+        reminders::cancel(&state.pool, "note", &id).await.map_err(|e| e.to_string())?;
+    }
+    let note = db::get(&state.pool, &id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "Nota não encontrada".to_string())?;
+    let _ = app.emit("notes:changed", &id);
+    let _ = app.emit("reminders:changed", &id);
     Ok(note)
 }
 #[tauri::command]
 async fn delete_note(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String) -> Result<(), String> {
     db::delete(&state.pool, &id).await.map_err(|e| e.to_string())?;
+    reminders::cancel(&state.pool, "note", &id).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("reminders:changed", &id);
     let _ = app.emit("notes:changed", &id);
     Ok(())
 }
@@ -121,12 +133,18 @@ async fn update_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, i
 #[tauri::command]
 async fn set_task_completed(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, completed: bool) -> Result<tasks::Task, String> {
     let task = tasks::set_completed(&state.pool, &id, completed).await.map_err(|e| e.to_string())?;
+    if completed {
+        reminders::complete_task(&state.pool, &id).await.map_err(|e| e.to_string())?;
+        let _ = app.emit("reminders:changed", &id);
+    }
     let _ = app.emit("tasks:changed", &id);
     Ok(task)
 }
 #[tauri::command]
 async fn delete_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String) -> Result<(), String> {
     tasks::delete(&state.pool, &id).await.map_err(|e| e.to_string())?;
+    reminders::cancel(&state.pool, "task", &id).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("reminders:changed", &id);
     let _ = app.emit("tasks:changed", &id);
     Ok(())
 }
@@ -157,6 +175,66 @@ async fn set_task_plan(
         .await.map_err(|e| e.to_string())?;
     let _ = app.emit("tasks:changed", &id);
     Ok(task)
+}
+
+#[tauri::command]
+async fn list_reminders(state: tauri::State<'_, AppState>) -> Result<Vec<reminders::Reminder>, String> {
+    reminders::list(&state.pool).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn list_reminder_events(state: tauri::State<'_, AppState>) -> Result<Vec<reminders::ReminderEvent>, String> {
+    reminders::list_events(&state.pool).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn schedule_reminder(
+    state: tauri::State<'_, AppState>, app: tauri::AppHandle,
+    target_type: String, target_id: String, due_at: i64, repeat_rule: String,
+) -> Result<reminders::Reminder, String> {
+    if !reminders::valid_target(&target_type) || !reminders::valid_rule(&repeat_rule)
+        || !reminders::valid_date(due_at) {
+        return Err("Dados de lembrete inválidos".into());
+    }
+    let result = reminders::schedule(&state.pool, &target_type, &target_id, due_at, &repeat_rule)
+        .await.map_err(|e| e.to_string())?;
+    let _ = app.emit("reminders:changed", &result.id);
+    if target_type == "note" { let _ = app.emit("notes:changed", &target_id); }
+    Ok(result)
+}
+#[tauri::command]
+async fn cancel_reminder(
+    state: tauri::State<'_, AppState>, app: tauri::AppHandle,
+    target_type: String, target_id: String,
+) -> Result<(), String> {
+    if !reminders::valid_target(&target_type) { return Err("Tipo inválido".into()); }
+    reminders::cancel(&state.pool, &target_type, &target_id)
+        .await.map_err(|e| e.to_string())?;
+    let _ = app.emit("reminders:changed", &target_id);
+    if target_type == "note" { let _ = app.emit("notes:changed", &target_id); }
+    Ok(())
+}
+#[tauri::command]
+async fn snooze_reminder(
+    state: tauri::State<'_, AppState>, app: tauri::AppHandle,
+    id: String, minutes: i64,
+) -> Result<reminders::Reminder, String> {
+    if !matches!(minutes, 5 | 15 | 30 | 60 | 180 | 1440) {
+        return Err("Escolha um tempo de adiamento válido".into());
+    }
+    let result = reminders::snooze(&state.pool, &id, minutes, db::now_ms())
+        .await.map_err(|e| e.to_string())?;
+    let _ = app.emit("reminders:changed", &result.id);
+    if result.target_type == "note" { let _ = app.emit("notes:changed", &result.target_id); }
+    Ok(result)
+}
+#[tauri::command]
+async fn acknowledge_reminder(
+    state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String,
+) -> Result<reminders::Reminder, String> {
+    let result = reminders::acknowledge(&state.pool, &id, db::now_ms())
+        .await.map_err(|e| e.to_string())?;
+    let _ = app.emit("reminders:changed", &result.id);
+    if result.target_type == "note" { let _ = app.emit("notes:changed", &result.target_id); }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -202,7 +280,9 @@ async fn inbox_to_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle,
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, create_note_copy, create_data_backup, list_data_backups, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, create_planned_task, set_task_plan, update_task, set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task])
+        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, create_note_copy, create_data_backup, list_data_backups, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, create_planned_task, set_task_plan, update_task, set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task,
+            list_reminders, list_reminder_events, schedule_reminder, cancel_reminder,
+            snooze_reminder, acknowledge_reminder])
         .setup(|app| {
             let path = app.path().app_data_dir()?;
             std::fs::create_dir_all(&path)?;
@@ -261,28 +341,50 @@ pub fn run() {
                 builder.build(app)?;
             }
 
-            // Poll reminders in native code, independent of the main webview.
+            // Native scheduler survives hidden windows. It runs on startup,
+            // recovering overdue reminders into the persistent attention inbox.
+            // While the EXE or computer is off, Windows toasts cannot be sent.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
                 loop {
                     interval.tick().await;
-                    let due = match db::due(&pool).await {
-                        Ok(notes) => notes,
-                        Err(e) => { eprintln!("Falha ao consultar lembretes: {e}"); continue; }
+                    let now = db::now_ms();
+                    let due = match reminders::claim_due(&pool, now).await {
+                        Ok(items) => items,
+                        Err(e) => { eprintln!("Falha ao verificar lembretes: {e}"); continue; }
                     };
-                    for note in due {
-                        let title = if note.title.trim().is_empty() { "Lembrete" } else { &note.title };
-                        let content = if note.body.trim().is_empty() { "Você tem algo para lembrar." } else { &note.body };
-                        let body: String = content.chars().take(160).collect();
-                        match handle.notification().builder().title(title).body(&body).show() {
-                            Ok(_) => {
-                                if let Some(at) = note.remind_at { let _ = db::mark_notified(&pool, &note.id, at).await; }
-                                let _ = handle.emit("notes:changed", &note.id);
+                    if due.is_empty() { continue; }
+                    let _ = handle.emit("reminders:changed", ());
+                    // After a long offline period, avoid a flood of individual toasts:
+                    // one short summary for a batch, while each item stays in the inbox.
+                    if due.len() > 3 || due.iter().any(|r| r.due_at < now - 6 * 60 * 60 * 1000) {
+                        let ids: Vec<String> = due.iter().map(|r| r.id.clone()).collect();
+                        let body = format!("{} lembrete(s) precisam da sua atenção. Abra o RECALL.", due.len());
+                        let result = handle.notification().builder()
+                            .title("RECALL — lembretes pendentes").body(&body).show();
+                        let error = result.as_ref().err().map(|e| e.to_string());
+                        if let Err(e) = reminders::record_dispatch(&pool, &ids, now, error.as_deref()).await {
+                            eprintln!("Erro ao registrar despacho de lembretes: {e}");
+                        }
+                    } else {
+                        for item in due {
+                            let text = if item.details.trim().is_empty() {
+                                "Você tem algo para lembrar.".to_string()
+                            } else {
+                                item.details.chars().take(150).collect()
+                            };
+                            let result = handle.notification().builder().title(&item.title)
+                                .body(&text).show();
+                            let error = result.as_ref().err().map(|e| e.to_string());
+                            if let Err(e) = reminders::record_dispatch(
+                                &pool, &[item.id.clone()], now, error.as_deref(),
+                            ).await {
+                                eprintln!("Falha ao salvar estado da notificação: {e}");
                             }
-                            Err(e) => eprintln!("Falha na notificação: {e}")
                         }
                     }
+                    let _ = handle.emit("reminders:changed", ());
                 }
             });
             Ok(())
