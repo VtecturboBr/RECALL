@@ -4,14 +4,16 @@
   import {
     NotebookPen, Search, Plus, Pin, Bell, Presentation, Target, ArrowUpRight,
     Trash2, ChevronLeft, ChevronRight, X, Check, Menu, MoreHorizontal,
-    StickyNote, FileText, CircleHelp, CalendarClock, PencilLine, Zap
+    StickyNote, FileText, CircleHelp, CalendarClock, PencilLine, Zap, Sun, Inbox as InboxIcon
   } from 'lucide-svelte';
   import { notesApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openSticky, openQuickCapture } from '../lib/windows';
   import type { Note } from '../lib/types';
+  import Today from './Today.svelte';
+  import Inbox from './Inbox.svelte';
 
-  type Tab = 'all' | 'pinned' | 'reminders' | 'presentation';
-  let tab = $state<Tab>('all');
+  type Tab = 'today' | 'inbox' | 'all' | 'pinned' | 'reminders' | 'presentation';
+  let tab = $state<Tab>('today');
   let notes = $state<Note[]>([]);
   let selectedId = $state<string | null>(null);
   let search = $state('');
@@ -29,7 +31,7 @@
   const dirty = new Map<string, { title: string; body: string }>();
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const writing = new Map<string, Promise<void>>();
-  const tabNames: Record<Tab, string> = { all: 'Todas as notas', pinned: 'Fixadas', reminders: 'Lembretes', presentation: 'Apresentações' };
+  const tabNames: Record<Tab, string> = { today: 'Hoje', inbox: 'Caixa de entrada', all: 'Todas as notas', pinned: 'Fixadas', reminders: 'Lembretes', presentation: 'Apresentações' };
   let active = $derived(notes.find((n) => n.id === selectedId) ?? null);
   let visible = $derived(notes
     .filter((n) => tab === 'all' || (tab === 'pinned' && n.pinned) || (tab === 'reminders' && n.remind_at !== null) || (tab === 'presentation' && n.kind === 'presentation'))
@@ -159,30 +161,32 @@
   <aside class="sidebar" aria-label="Navegação principal">
     <div class="brand"><div class="brand-icon"><NotebookPen size={20} strokeWidth={1.8}/></div><div class="brand-copy"><strong>memória<span>.</span></strong><small>EXTERNA</small></div></div>
     <nav class="navigation">
+      <button class:current={tab === 'today'} onclick={() => changeTab('today')}><Sun size={18}/> Hoje</button>
+      <button class:current={tab === 'inbox'} onclick={() => changeTab('inbox')}><InboxIcon size={18}/> Entrada</button>
       <button class:current={tab === 'all'} onclick={() => changeTab('all')}><StickyNote size={18}/> Notas</button>
       <button class:current={tab === 'pinned'} onclick={() => changeTab('pinned')}><Pin size={18}/> Fixadas</button>
       <button class:current={tab === 'reminders'} onclick={() => changeTab('reminders')}><Bell size={18}/> Lembretes</button>
       <button class:current={tab === 'presentation'} onclick={() => changeTab('presentation')}><Presentation size={18}/> Apresentações</button>
     </nav>
-    <div class="sidebar-bottom"><span class="local-indicator"></span> Dados locais <span class="version-tag">v0.4</span></div>
+    <div class="sidebar-bottom"><span class="local-indicator"></span> Dados locais <span class="version-tag">v0.5 α</span></div>
   </aside>
 
   <main class="main-frame">
     <header class="app-toolbar">
       <button class="icon-btn menu-toggle" aria-label="Mostrar ou esconder menu" title="Mostrar ou esconder menu" onclick={() => sidebarOpen = !sidebarOpen}><Menu size={19}/></button>
       <h1>{focusMode ? 'Modo foco' : presentationMode ? 'Apresentação' : tabNames[tab]}</h1>
-      {#if !focusMode && !presentationMode}<span class="total-count">{visible.length}</span>{/if}
+      {#if !focusMode && !presentationMode && tab !== 'today' && tab !== 'inbox'}<span class="total-count">{visible.length}</span>{/if}
       <div class="toolbar-spacer"></div>
       {#if focusMode || presentationMode}
         <button class="quiet-btn" onclick={() => { focusMode = false; presentationMode = false; }}><X size={16}/> Voltar</button>
       {:else}
         <button class="capture-toolbar" onclick={launchQuickCapture} title="Capturar ideia (Ctrl+Shift+Espaço)"><Zap size={16}/> Capturar <span>Ctrl+Shift+Espaço</span></button>
         <button class="icon-btn help-trigger" aria-label="Ajuda" title="Como usar" onclick={() => helpOpen = !helpOpen}><CircleHelp size={18}/></button>
-        <button class="create-btn" onclick={() => create(tab === 'presentation' ? 'presentation' : 'note')}><Plus size={18}/> {tab === 'presentation' ? 'Nova apresentação' : 'Nova nota'}</button>
+        {#if tab !== 'today' && tab !== 'inbox'}<button class="create-btn" onclick={() => create(tab === 'presentation' ? 'presentation' : 'note')}><Plus size={18}/> {tab === 'presentation' ? 'Nova apresentação' : 'Nova nota'}</button>{/if}
       {/if}
     </header>
     {#if error}<div class="notice error-notice" role="alert">{error}<button aria-label="Fechar aviso" onclick={() => error = ''}><X size={15}/></button></div>{/if}
-    {#if helpOpen}<div class="notice">Crie uma nota, escreva normalmente e ela será salva sozinha. Clique no ícone de janela para deixá-la flutuando no Windows. Use Ctrl+N para uma nova nota ou Ctrl+Shift+Espaço para uma captura rápida, mesmo com a janela principal minimizada.<button aria-label="Fechar ajuda" onclick={() => helpOpen = false}><X size={15}/></button></div>{/if}
+    {#if helpOpen}<div class="notice">Crie uma nota e ela será salva sozinha. A captura rápida guarda ideias na Entrada para organizar depois. Clique no ícone de janela para deixá-la flutuando no Windows. Use Ctrl+N para uma nova nota ou Ctrl+Shift+Espaço para uma captura rápida, mesmo com a janela principal minimizada.<button aria-label="Fechar ajuda" onclick={() => helpOpen = false}><X size={15}/></button></div>{/if}
 
     {#if focusMode && active}
       <div class="focus-view">
@@ -197,6 +201,10 @@
         <div class="presentation-body">{slides[slideIndex] || 'Escreva uma etapa por cartão, separando as partes com uma linha contendo ---'}</div>
         <div class="presentation-nav"><button disabled={slideIndex <= 0} onclick={() => slideIndex--}><ChevronLeft size={18}/> Anterior</button><div class="presentation-track">{#each slides as _, i}<span class:active={i === slideIndex}></span>{/each}</div><button disabled={slideIndex >= slides.length - 1} onclick={() => slideIndex++}>Próximo <ChevronRight size={18}/></button></div>
       </div>
+    {:else if tab === 'today'}
+      <Today />
+    {:else if tab === 'inbox'}
+      <Inbox onNoteCreated={(id) => { void refresh().then(() => { tab = 'all'; selectedId = id; }); }} onTaskCreated={() => { tab = 'today'; }}/>
     {:else}
       <div class="content-layout">
         <section class="list-pane" aria-label="Lista de anotações">
