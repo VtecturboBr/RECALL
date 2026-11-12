@@ -1,0 +1,56 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Memoria Externa",
+  "version": "0.4.0",
+  "identifier": "app.memoriaexterna.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Memória Externa",
+        "width": 1160,
+        "height": 770,
+        "minWidth": 800,
+        "minHeight": 560,
+        "backgroundColor": "#0d0d0f"
+      },
+      {
+        "label": "capture",
+        "title": "Captura rápida · Memória Externa",
+        "url": "index.html?capture=1",
+        "width": 490,
+        "height": 355,
+        "minWidth": 440,
+        "minHeight": 310,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true,
+        "visible": false,
+        "backgroundColor": "#121216"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ]
+  }
+}

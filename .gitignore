@@ -1,0 +1,36 @@
+# Dependências e compilações
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.log
+npm-debug.log*
+
+# Segredos e configurações locais
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Bancos e dados pessoais
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
+*.db-shm
+*.db-wal
+*.sqlite-journal
+*.db-journal
+*.bak
+backups/
+userdata/
+
+# Ambiente local
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

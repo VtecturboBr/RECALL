@@ -1,0 +1,37 @@
+name: Validar RECALL Windows
+
+on:
+  push:
+    branches: [main, 'feature/**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-check:
+    name: Frontend e Rust (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node.js LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+      - name: Instalar dependencias web
+        run: npm install --no-audit --no-fund
+      - name: Verificar Svelte e TypeScript
+        run: npm run check
+      - name: Compilar frontend
+        run: npm run build
+      - name: Verificar Rust/Tauri
+        run: cargo check --manifest-path src-tauri/Cargo.toml
