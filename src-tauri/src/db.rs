@@ -231,3 +231,101 @@ pub async fn mark_notified(pool: &SqlitePool, id: &str, remind_at: i64) -> Resul
         .bind(now_ms()).bind(id).bind(remind_at).execute(pool).await?;
     Ok(())
 }
+
+
+#[cfg(test)]
+mod integrity_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    fn temporary_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("recall-integrity-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn legacy_upgrade_snapshots_before_creating_revision_table() {
+        let dir = temporary_dir();
+        let path = dir.join("memoria.sqlite");
+        let opts = SqliteConnectOptions::new().filename(&path).create_if_missing(true);
+        let legacy = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await.unwrap();
+        sqlx::query("CREATE TABLE notes (
+            id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT 'note', pinned INTEGER NOT NULL DEFAULT 0,
+            remind_at INTEGER, notified_at INTEGER, created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL, deleted_at INTEGER
+        )").execute(&legacy).await.unwrap();
+        sqlx::query("INSERT INTO notes(id,title,body,created_at,updated_at) VALUES('old','Meu texto','Preservar',1,1)")
+            .execute(&legacy).await.unwrap();
+        legacy.close().await;
+
+        let pool = connect(&path).await.unwrap();
+        let first = get(&pool, "old").await.unwrap().unwrap();
+        assert_eq!(first.revision, 0);
+        assert_eq!(first.title, "Meu texto");
+        assert_eq!(first.body, "Preservar");
+        let backups = list_backups(&path).unwrap();
+        assert_eq!(backups.len(), 1);
+        assert!(backups[0].file_name.contains("pre-integrity"));
+        assert!(backups[0].size_bytes > 0);
+
+        let changed = save(&pool, "old", "Revisado", "Conteúdo", 0).await.unwrap().unwrap();
+        assert_eq!(changed.revision, 1);
+        assert!(save(&pool, "old", "Obsoleto", "Antigo", 0).await.unwrap().is_none());
+        assert_eq!(get(&pool, "old").await.unwrap().unwrap().title, "Revisado");
+
+        let second_pool = connect(&path).await.unwrap();
+        assert_eq!(list_backups(&path).unwrap().len(), 1, "migration backup cannot repeat");
+        second_pool.close().await;
+        pool.close().await;
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn simultaneous_saves_reject_one_stale_revision() {
+        let dir = temporary_dir();
+        let path = dir.join("memoria.sqlite");
+        let pool = connect(&path).await.unwrap();
+        let note = create(&pool, "note").await.unwrap();
+        let (a, b) = tokio::join!(
+            save(&pool, &note.id, "Primeira", "A", note.revision),
+            save(&pool, &note.id, "Segunda", "B", note.revision)
+        );
+        let a = a.unwrap().is_some();
+        let b = b.unwrap().is_some();
+        assert_ne!(a, b, "exactly one of the same-revision saves may succeed");
+        assert_eq!(get(&pool, &note.id).await.unwrap().unwrap().revision, 1);
+
+        // A save from an older binary still increments the note revision via trigger.
+        sqlx::query("UPDATE notes SET body='Edição externa' WHERE id=?")
+            .bind(&note.id).execute(&pool).await.unwrap();
+        assert_eq!(get(&pool, &note.id).await.unwrap().unwrap().revision, 2);
+        assert!(save(&pool, &note.id, "Stale", "X", 1).await.unwrap().is_none());
+
+        pool.close().await;
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn snapshot_has_sqlite_integrity_and_all_committed_data() {
+        let dir = temporary_dir();
+        let path = dir.join("memoria.sqlite");
+        let pool = connect(&path).await.unwrap();
+        let note = create_copy(&pool, "Importante", "Salvar no WAL", "note").await.unwrap();
+        let item = create_backup(&pool, &path, "manual").await.unwrap();
+        assert!(item.file_name.starts_with("recall-manual-"));
+        assert!(item.file_path.ends_with(".sqlite"));
+        let options = SqliteConnectOptions::new().filename(&item.file_path).read_only(true);
+        let other = SqlitePoolOptions::new().max_connections(1).connect_with(options).await.unwrap();
+        let check: String = sqlx::query_scalar("PRAGMA quick_check").fetch_one(&other).await.unwrap();
+        assert_eq!(check, "ok");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes WHERE id=?")
+            .bind(&note.id).fetch_one(&other).await.unwrap();
+        assert_eq!(count, 1);
+        other.close().await;
+        pool.close().await;
+        let _ = fs::remove_dir_all(dir);
+    }
+}
