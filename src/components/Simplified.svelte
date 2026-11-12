@@ -37,8 +37,8 @@
   let taskDue = $state('');
   let presenting = $state(false);
   let slideIndex = $state(0);
-  let selected = $derived(entries.find(item => item.key === selectedKey) ?? null);
   let entries = $derived(buildWorkspace(notes, tasks, ideas));
+  let selected = $derived(entries.find(item => item.key === selectedKey) ?? null);
   let matches = $derived(entries.filter(item =>
     (item.title + ' ' + item.text).toLocaleLowerCase('pt-BR').includes(search.trim().toLocaleLowerCase('pt-BR'))));
   let currentTask = $derived(nextTask(tasks));
@@ -409,7 +409,7 @@
               <div class="rx-note-options">
                 <label class="rx-field"><span><Bell size={15}/> Lembrar desta nota</span><input type="datetime-local" value={toLocalInput(selected.note.remind_at)} onchange={(e) => { void updateReminder(selected.note, e.currentTarget.value); }}/></label>
                 <div class="rx-actions">
-                  <button class="rx-subtle" onclick={() => { void floatNote(selected.note); }}><MonitorUp size={16}/> Fixar no desktop</button>
+                  <button class="rx-subtle" onclick={() => { void floatNote(selected.note); }}><MonitorUp size={16}/> Abrir cartão flutuante</button>
                   <button class="rx-subtle" onclick={() => { void flushNote().then(ok => { if (ok) { slideIndex = 0; presenting = true; } }); }}><Presentation size={16}/> Apresentar</button>
                 </div>
                 <p class="rx-hint">Para separar uma apresentação em cartões, escreva <code>---</code> em uma linha isolada.</p>
