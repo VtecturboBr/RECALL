@@ -109,6 +109,35 @@ async fn delete_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, i
     Ok(())
 }
 #[tauri::command]
+async fn create_planned_task(
+    state: tauri::State<'_, AppState>, app: tauri::AppHandle,
+    title: String, details: String, bucket: String,
+    planned_for: Option<i64>, due_at: Option<i64>,
+) -> Result<tasks::Task, String> {
+    if title.trim().is_empty() || title.chars().count() > 250 || details.chars().count() > 100_000
+        || !tasks::valid_plan(&bucket, planned_for) || due_at.map(|at| at < 0).unwrap_or(false) {
+        return Err("Dados de planejamento inválidos".into());
+    }
+    let task = tasks::create_planned(&state.pool, &title, &details, &bucket, planned_for, due_at)
+        .await.map_err(|e| e.to_string())?;
+    let _ = app.emit("tasks:changed", &task.id);
+    Ok(task)
+}
+#[tauri::command]
+async fn set_task_plan(
+    state: tauri::State<'_, AppState>, app: tauri::AppHandle,
+    id: String, bucket: String, planned_for: Option<i64>,
+) -> Result<tasks::Task, String> {
+    if !tasks::valid_plan(&bucket, planned_for) {
+        return Err("Planejamento inválido".into());
+    }
+    let task = tasks::set_plan(&state.pool, &id, &bucket, planned_for)
+        .await.map_err(|e| e.to_string())?;
+    let _ = app.emit("tasks:changed", &id);
+    Ok(task)
+}
+
+#[tauri::command]
 async fn list_inbox(state: tauri::State<'_, AppState>) -> Result<Vec<inbox::InboxItem>, String> {
     inbox::list(&state.pool).await.map_err(|e| e.to_string())
 }
@@ -151,7 +180,7 @@ async fn inbox_to_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle,
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, update_task, set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task])
+        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, create_planned_task, set_task_plan, update_task, set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task])
         .setup(|app| {
             let path = app.path().app_data_dir()?;
             std::fs::create_dir_all(&path)?;

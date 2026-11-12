@@ -9,13 +9,15 @@ pub struct Task {
     pub title: String,
     pub details: String,
     pub due_at: Option<i64>,
+    pub bucket: String,
+    pub planned_for: Option<i64>,
     pub completed_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
     pub deleted_at: Option<i64>,
 }
 
-const FIELDS: &str = "id,title,details,due_at,completed_at,created_at,updated_at,deleted_at";
+const FIELDS: &str = "t.id,t.title,t.details,t.due_at,t.completed_at,t.created_at,t.updated_at,t.deleted_at,COALESCE(p.bucket,'today') AS bucket,p.planned_for";
 
 pub async fn initialize(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query("CREATE TABLE IF NOT EXISTS tasks (
@@ -30,17 +32,59 @@ pub async fn initialize(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )").execute(pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_tasks_open ON tasks (completed_at, due_at, updated_at) WHERE deleted_at IS NULL")
         .execute(pool).await?;
+    // Additive planning table: existing tasks keep their original columns and ids.
+    sqlx::query("CREATE TABLE IF NOT EXISTS task_plans (
+        task_id TEXT PRIMARY KEY NOT NULL REFERENCES tasks(id),
+        bucket TEXT NOT NULL CHECK (bucket IN ('today','later','someday')),
+        planned_for INTEGER
+    )").execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_task_plans_bucket ON task_plans(bucket,planned_for)")
+        .execute(pool).await?;
     Ok(())
 }
 
+pub fn valid_plan(bucket: &str, planned_for: Option<i64>) -> bool {
+    matches!(bucket, "today" | "later" | "someday")
+        && (bucket == "later" || planned_for.is_none())
+        && planned_for.map(|value| value >= 0).unwrap_or(true)
+}
+
+pub async fn create_planned(
+    pool: &SqlitePool, title: &str, details: &str,
+    bucket: &str, planned_for: Option<i64>, due_at: Option<i64>,
+) -> Result<Task, sqlx::Error> {
+    let id = Uuid::new_v4().to_string();
+    let now = now_ms();
+    let mut tx = pool.begin().await?;
+    sqlx::query("INSERT INTO tasks(id,title,details,due_at,created_at,updated_at) VALUES(?,?,?,?,?,?)")
+        .bind(&id).bind(title.trim()).bind(details).bind(due_at).bind(now).bind(now)
+        .execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO task_plans(task_id,bucket,planned_for) VALUES(?,?,?)")
+        .bind(&id).bind(bucket).bind(planned_for).execute(&mut *tx).await?;
+    tx.commit().await?;
+    get(pool, &id).await?.ok_or(sqlx::Error::RowNotFound)
+}
+
+pub async fn set_plan(pool: &SqlitePool, id: &str, bucket: &str, planned_for: Option<i64>) -> Result<Task, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let updated = sqlx::query("UPDATE tasks SET updated_at=? WHERE id=? AND deleted_at IS NULL")
+        .bind(now_ms()).bind(id).execute(&mut *tx).await?;
+    if updated.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
+    sqlx::query("INSERT INTO task_plans(task_id,bucket,planned_for) VALUES(?,?,?)
+        ON CONFLICT(task_id) DO UPDATE SET bucket=excluded.bucket,planned_for=excluded.planned_for")
+        .bind(id).bind(bucket).bind(planned_for).execute(&mut *tx).await?;
+    tx.commit().await?;
+    get(pool, id).await?.ok_or(sqlx::Error::RowNotFound)
+}
+
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Task>, sqlx::Error> {
-    sqlx::query_as::<_, Task>(&format!("SELECT {FIELDS} FROM tasks WHERE deleted_at IS NULL
-        ORDER BY (completed_at IS NOT NULL), (due_at IS NULL), due_at, updated_at DESC"))
+    sqlx::query_as::<_, Task>(&format!("SELECT {FIELDS} FROM tasks t LEFT JOIN task_plans p ON p.task_id=t.id WHERE t.deleted_at IS NULL
+        ORDER BY (t.completed_at IS NOT NULL), (t.due_at IS NULL), t.due_at, t.updated_at DESC"))
         .fetch_all(pool).await
 }
 
 pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<Task>, sqlx::Error> {
-    sqlx::query_as::<_, Task>(&format!("SELECT {FIELDS} FROM tasks WHERE id=? AND deleted_at IS NULL"))
+    sqlx::query_as::<_, Task>(&format!("SELECT {FIELDS} FROM tasks t LEFT JOIN task_plans p ON p.task_id=t.id WHERE t.id=? AND t.deleted_at IS NULL"))
         .bind(id).fetch_optional(pool).await
 }
 
@@ -73,4 +117,21 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
         .bind(now).bind(now).bind(id).execute(pool).await?;
     if updated.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
     Ok(())
+}
+
+
+#[cfg(test)]
+mod planning_tests {
+    use super::valid_plan;
+    #[test]
+    fn accepts_only_valid_bucket_and_schedule() {
+        assert!(valid_plan("today", None));
+        assert!(valid_plan("later", Some(1_800_000_000_000)));
+        assert!(valid_plan("later", None));
+        assert!(valid_plan("someday", None));
+        assert!(!valid_plan("someday", Some(1)));
+        assert!(!valid_plan("today", Some(1)));
+        assert!(!valid_plan("trash", None));
+        assert!(!valid_plan("later", Some(-10)));
+    }
 }
