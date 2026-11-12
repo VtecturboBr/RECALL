@@ -120,6 +120,13 @@ async fn capture_inbox(state: tauri::State<'_, AppState>, app: tauri::AppHandle,
     Ok(item)
 }
 #[tauri::command]
+async fn update_inbox(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, text: String) -> Result<inbox::InboxItem, String> {
+    if text.trim().is_empty() || text.chars().count() > 100_000 { return Err("Escreva uma ideia válida".into()); }
+    let item = inbox::update(&state.pool, &id, &text).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("inbox:changed", &id);
+    Ok(item)
+}
+#[tauri::command]
 async fn dismiss_inbox(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String) -> Result<(), String> {
     inbox::dismiss(&state.pool, &id).await.map_err(|e| e.to_string())?;
     let _ = app.emit("inbox:changed", &id);
@@ -144,7 +151,7 @@ async fn inbox_to_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle,
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, update_task, set_task_completed, delete_task, list_inbox, capture_inbox, dismiss_inbox, inbox_to_note, inbox_to_task])
+        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, update_task, set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task])
         .setup(|app| {
             let path = app.path().app_data_dir()?;
             std::fs::create_dir_all(&path)?;

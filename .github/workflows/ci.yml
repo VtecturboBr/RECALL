@@ -36,6 +36,8 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Verificar Svelte e TypeScript
         run: npm run check
+      - name: Testar busca e organização de itens
+        run: npm run test:unit
       - name: Compilar frontend
         run: npm run build
       - name: Verificar Rust/Tauri

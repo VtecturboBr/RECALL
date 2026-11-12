@@ -1,3 +1,11 @@
+## v0.5 alpha 3 — Refinamento da experiência
+- Captura direta de tarefa ou ideia na tela Agora.
+- Foco escolhido pelo usuário, persistido localmente.
+- Edição de ideias sem conversão obrigatória; salvamento automático de ideias e tarefas.
+- Busca sem acentos, filtros de tipo e indicador de resultados.
+- Proteção de rascunhos durante navegação, novo conjunto de testes de organização.
+- Ajustes de hierarquia visual e acessibilidade.
+
 ## Instalador Windows — v0.5 alpha 1
 - Build automático Windows x64 NSIS, com upload de instalador e SHA-256.
 - Nome visível RECALL, versão 0.5.0-alpha.1, identificador interno anterior preservado.

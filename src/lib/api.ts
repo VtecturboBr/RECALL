@@ -36,6 +36,7 @@ export const tasksApi = {
 export const inboxApi = {
   list: () => invoke<InboxItem[]>('list_inbox'),
   capture: (text: string) => invoke<InboxItem>('capture_inbox', { text }),
+  update: (id: string, text: string) => invoke<InboxItem>('update_inbox', { id, text }),
   dismiss: (id: string) => invoke<void>('dismiss_inbox', { id }),
   toNote: (id: string) => invoke<Note>('inbox_to_note', { id }),
   toTask: (id: string) => invoke<Task>('inbox_to_task', { id })

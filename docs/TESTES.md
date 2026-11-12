@@ -36,3 +36,14 @@ Não testados neste ambiente:
 - [ ] Testar instalação e bandeja no Windows real.
 
 Obs.: o campo de data de tarefas ainda não dispara notificações. A prévia HTML permanece na v0.4.
+
+
+## Alpha 3 — regressão de experiência
+- [ ] Capturar ideia e tarefa diretamente em Agora, sem duplicação.
+- [ ] Escolher tarefa em foco, reiniciar o app e confirmar preferência local.
+- [ ] Editar ideia sem transformá-la em nota.
+- [ ] Editar tarefa e verificar salvamento automático após fechar e abrir novamente.
+- [ ] Texto não é perdido ao alternar item caso um salvamento falhe.
+- [ ] Busca por "reuniao" encontra "Reunião"; filtros exibem apenas o tipo escolhido.
+- [ ] Captura rápida, lembretes de notas e cartões flutuantes continuam funcionando.
+- [ ] Notas antigas preservadas após instalação sobre a Alpha 2.

@@ -40,6 +40,16 @@ pub async fn capture(pool: &SqlitePool, text: &str) -> Result<InboxItem, sqlx::E
         .bind(id).fetch_one(pool).await
 }
 
+pub async fn update(pool: &SqlitePool, id: &str, text: &str) -> Result<InboxItem, sqlx::Error> {
+    let now = now_ms();
+    let result = sqlx::query("UPDATE inbox_items SET text=?, updated_at=? WHERE id=? AND processed_at IS NULL")
+        .bind(text.trim()).bind(now).bind(id).execute(pool).await?;
+    if result.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
+    sqlx::query_as::<_, InboxItem>(
+        "SELECT id,text,created_at,updated_at,processed_at FROM inbox_items WHERE id=? AND processed_at IS NULL"
+    ).bind(id).fetch_one(pool).await
+}
+
 pub async fn dismiss(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     let now = now_ms();
     let result = sqlx::query("UPDATE inbox_items SET processed_at=?, updated_at=? WHERE id=? AND processed_at IS NULL")

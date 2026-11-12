@@ -45,3 +45,17 @@ export function nextTask(tasks: Task[]): Task | null {
 export function toSlides(content: string): string[] {
   return content.split(/^\s*---\s*$/m).map(s => s.trim()).filter(Boolean);
 }
+
+
+/** Searches all three content types, ignoring accents and case. No data mutation. */
+export function searchWorkspace(
+  entries: WorkspaceEntry[],
+  query: string,
+  type: 'all' | 'note' | 'task' | 'idea' = 'all'
+): WorkspaceEntry[] {
+  const normalize = (value: string) =>
+    value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+  const needle = normalize(query.trim());
+  return entries.filter(entry => (type === 'all' || entry.type === type)
+    && (!needle || normalize(entry.title + ' ' + entry.text).includes(needle)));
+}
