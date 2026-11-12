@@ -15,6 +15,7 @@ pub struct Reminder {
     pub details: String,
     pub due_at: i64,
     pub anchor_at: i64,
+    pub series_at: i64,
     pub repeat_rule: String,
     pub state: String,
     pub alerted_at: Option<i64>,
@@ -40,7 +41,7 @@ const SELECT: &str = "SELECT r.id,r.target_type,r.target_id,
          ELSE COALESCE(t.title,'Tarefa') END AS title,
     CASE WHEN r.target_type='note' THEN COALESCE(n.body,'')
          ELSE COALESCE(t.details,'') END AS details,
-    r.due_at,r.anchor_at,r.repeat_rule,r.state,r.alerted_at,r.dispatched_at,
+    r.due_at,r.anchor_at,r.series_at,r.repeat_rule,r.state,r.alerted_at,r.dispatched_at,
     r.last_error,r.created_at,r.updated_at
     FROM reminder_rules r
     LEFT JOIN notes n ON r.target_type='note' AND n.id=r.target_id
@@ -64,6 +65,7 @@ pub async fn initialize(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         target_id TEXT NOT NULL,
         due_at INTEGER NOT NULL,
         anchor_at INTEGER NOT NULL,
+        series_at INTEGER NOT NULL,
         repeat_rule TEXT NOT NULL DEFAULT 'none' CHECK(repeat_rule IN ('none','daily','weekly','monthly')),
         state TEXT NOT NULL DEFAULT 'scheduled' CHECK(state IN ('scheduled','snoozed','attention','done','cancelled')),
         alerted_at INTEGER,
@@ -90,9 +92,9 @@ pub async fn initialize(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // original remind_at/notified_at columns. A previously dispatched notification
     // is shown in the attention inbox, but not re-toasted on startup.
     sqlx::query("INSERT OR IGNORE INTO reminder_rules(
-        id,target_type,target_id,due_at,anchor_at,repeat_rule,state,alerted_at,
+        id,target_type,target_id,due_at,anchor_at,series_at,repeat_rule,state,alerted_at,
         dispatched_at,created_at,updated_at)
-        SELECT 'legacy-note:' || n.id,'note',n.id,n.remind_at,n.remind_at,'none',
+        SELECT 'legacy-note:' || n.id,'note',n.id,n.remind_at,n.remind_at,n.remind_at,'none',
         CASE WHEN n.notified_at IS NULL THEN 'scheduled' ELSE 'attention' END,
         n.notified_at,n.notified_at,n.created_at,n.updated_at
         FROM notes n WHERE n.deleted_at IS NULL AND n.remind_at IS NOT NULL")
@@ -139,15 +141,15 @@ pub async fn schedule(
     };
     if found == 0 { return Err(sqlx::Error::RowNotFound); }
     sqlx::query("INSERT INTO reminder_rules(
-        id,target_type,target_id,due_at,anchor_at,repeat_rule,state,
+        id,target_type,target_id,due_at,anchor_at,series_at,repeat_rule,state,
         alerted_at,dispatched_at,last_error,created_at,updated_at
-    ) VALUES(?,?,?,?,?,'none','scheduled',NULL,NULL,NULL,?,?)
+    ) VALUES(?,?,?,?,?,?,'none','scheduled',NULL,NULL,NULL,?,?)
     ON CONFLICT(target_type,target_id) DO UPDATE SET
-       due_at=excluded.due_at,anchor_at=excluded.anchor_at,
+       due_at=excluded.due_at,anchor_at=excluded.anchor_at,series_at=excluded.series_at,
        state='scheduled',alerted_at=NULL,dispatched_at=NULL,last_error=NULL,
        updated_at=excluded.updated_at")
         .bind(Uuid::new_v4().to_string()).bind(kind).bind(target_id)
-        .bind(due_at).bind(due_at).bind(now).bind(now)
+        .bind(due_at).bind(due_at).bind(due_at).bind(now).bind(now)
         .execute(&mut *tx).await?;
     sqlx::query("UPDATE reminder_rules SET repeat_rule=? WHERE target_type=? AND target_id=?")
         .bind(rule).bind(kind).bind(target_id).execute(&mut *tx).await?;
@@ -326,11 +328,11 @@ pub async fn acknowledge(
     pool: &SqlitePool, id: &str, at: i64,
 ) -> Result<Reminder, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let old = sqlx::query_as::<_, (String,String,i64,String,String)>(
-        "SELECT target_type,target_id,anchor_at,repeat_rule,state FROM reminder_rules WHERE id=?"
+    let old = sqlx::query_as::<_, (String,String,i64,i64,String,String)>(
+        "SELECT target_type,target_id,anchor_at,series_at,repeat_rule,state FROM reminder_rules WHERE id=?"
     ).bind(id).fetch_optional(&mut *tx).await?.ok_or(sqlx::Error::RowNotFound)?;
-    if old.4 != "attention" { return Err(sqlx::Error::RowNotFound); }
-    let next = next_occurrence(old.2,&old.3,at);
+    if old.5 != "attention" { return Err(sqlx::Error::RowNotFound); }
+    let next = next_occurrence(old.3,&old.4,at);
     let state = if next.is_some() {"scheduled"} else {"done"};
     let next_due = next.unwrap_or(old.2);
     sqlx::query("UPDATE reminder_rules SET state=?,due_at=?,anchor_at=?,
@@ -450,6 +452,27 @@ mod tests {
         let alerts=list(&again).await.unwrap();
         assert_eq!(alerts.iter().filter(|r| r.state=="attention").count(),1);
         again.close().await; let _=fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn monthly_series_keeps_the_original_31st_after_february() {
+        let dir=folder();let path=dir.join("memoria.sqlite");
+        let pool=db::connect(&path).await.unwrap();
+        let task=tasks::create(&pool,"Fechamento mensal").await.unwrap();
+        let jan=Local.with_ymd_and_hms(2026,1,31,10,0,0).single().unwrap().timestamp_millis();
+        let feb1=Local.with_ymd_and_hms(2026,2,1,11,0,0).single().unwrap().timestamp_millis();
+        let feb28=Local.with_ymd_and_hms(2026,2,28,11,0,0).single().unwrap().timestamp_millis();
+        let row=schedule(&pool,"task",&task.id,jan,"monthly").await.unwrap();
+        assert_eq!(claim_due(&pool,feb1).await.unwrap().len(),1);
+        let first=acknowledge(&pool,&row.id,feb1).await.unwrap();
+        let first_due=Local.timestamp_millis_opt(first.due_at).single().unwrap();
+        assert_eq!((first_due.month(),first_due.day()),(2,28));
+        assert_eq!(claim_due(&pool,feb28).await.unwrap().len(),1);
+        let second=acknowledge(&pool,&row.id,feb28).await.unwrap();
+        let second_due=Local.timestamp_millis_opt(second.due_at).single().unwrap();
+        assert_eq!((second_due.month(),second_due.day()),(3,31));
+        assert_eq!(second.series_at,jan);
+        pool.close().await;let _=fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
