@@ -54,3 +54,13 @@ Após cada entrega concreta: registrar branch, commit/PR, funcionalidades modifi
 - Migração: nova tabela auxiliar \`note_revisions\` com backup pré-migração e \`PRAGMA user_version=1\`; não remove colunas.
 - **Atenção:** o PR é trabalho em andamento e não deve ser integrado sem CI e testes Windows. Não tratar a existência do código como validação do comportamento.
 - Lembretes 2.0 e \`Onde parei?\` ficam fora deste PR.
+
+## Lembretes 2.0 — nova branch (Alpha 5)
+
+- Base verificada antes do trabalho: `feature/v0.5-alpha4-integridade`, commit `0e424456a5e42bffd15e207b0bdd9c0c1249084e`; PR #6 aberto, rascunho, não integrado à main; CI e NSIS anteriores passaram.
+- Nova branch: `feature/v0.5-alpha5-lembretes2`, **não fazer merge na main**.
+- Modelo: tabela aditiva `reminder_rules` com estados scheduled/snoozed/attention/done/cancelled e tabela `reminder_events`, migração das notas legadas, backup verificado antes do schema novo.
+- Recursos: agendamento opt-in de notas/tarefas, repetição diária/semanal/mensal, adiamento, histórico, fila de vencidos persistente, poll Rust e resumo de lotes antigos.
+- Documento: `docs/LEMBRETES_2_ALPHA5.md`.
+- Necessário: CI completa da branch, build NSIS, testes reais Windows com permissão nativa de notificações e migração de banco teste. Não declarar estável sem esse ciclo.
+- Próxima fase posterior, fora do escopo: modo Onde parei?.

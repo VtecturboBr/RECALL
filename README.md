@@ -75,3 +75,7 @@ A configuração não instala skills e não confirma testes em Windows real; con
 ## Alpha 4.1 — integridade de dados (branch experimental)
 
 A branch \`feature/v0.5-alpha4-integridade\` adiciona revisão de notas, detecção de conflitos entre janelas, rascunhos recuperáveis, snapshots SQLite seguros e roteiro de restauração offline. Veja [guia de proteção e testes](docs/INTEGRIDADE_ALPHA4_1.md). Não altera a \`main\`; validação Windows real ainda é necessária.
+
+## Alpha 5 — Lembretes 2.0 (experimental)
+
+Lembretes persistentes para notas e tarefas, recorrência, adiamento e histórico no próprio SQLite. A organização Agora/Arquivo é preservada. Consulte [o guia Alpha 5](docs/LEMBRETES_2_ALPHA5.md). PR separado sobre a Alpha 4.1, ainda sem merge na main.
