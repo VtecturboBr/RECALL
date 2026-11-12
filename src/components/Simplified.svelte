@@ -4,19 +4,28 @@
   import {
     BrainCircuit, CircleDot, Archive, Search, Plus, Check, Circle, Bell,
     FileText, Pencil, CalendarClock, MonitorUp, Presentation, ChevronLeft,
-    ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw, Target, ShieldCheck
+    ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw, Target, ShieldCheck, AlarmClock, Repeat2, CheckCheck
   } from 'lucide-svelte';
-  import { notesApi, tasksApi, inboxApi, backupsApi, formatDateTime, toLocalInput } from '../lib/api';
+  import { notesApi, tasksApi, inboxApi, backupsApi, remindersApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
-  import type { Note, Task, InboxItem } from '../lib/types';
+  import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
 
   type View = 'now' | 'archive';
   let view = $state<View>('now');
   let notes = $state<Note[]>([]);
   let tasks = $state<Task[]>([]);
   let ideas = $state<InboxItem[]>([]);
+  let reminders = $state<Reminder[]>([]);
+  let reminderHistory = $state<ReminderEvent[]>([]);
+  let reminderBusy = $state(false);
+  let reminderAt = $state('');
+  let reminderRepeat = $state<ReminderRule>('none');
+  let showAllReminders = $state(false);
+  const repeatLabel: Record<ReminderRule, string> = {
+    none: 'Uma vez', daily: 'Diariamente', weekly: 'Semanalmente', monthly: 'Mensalmente'
+  };
   let selectedKey = $state<string | null>(null);
   let search = $state('');
   let loading = $state(true);
@@ -81,16 +90,28 @@
   );
   let otherTasks = $derived(todayTasks.filter(t => t.id !== currentTask?.id)
     .sort((a, b) => (a.due_at ?? Infinity) - (b.due_at ?? Infinity) || a.created_at - b.created_at));
-  let dueNotes = $derived(notes.filter(n => n.deleted_at === null && n.remind_at !== null &&
-    n.notified_at === null).sort((a,b) => (a.remind_at ?? Infinity) - (b.remind_at ?? Infinity)));
+  let attentionReminders = $derived(reminders.filter(r => r.state === 'attention')
+    .sort((a,b)=>a.due_at-b.due_at));
+  let upcomingReminders = $derived(reminders.filter(r => r.state === 'scheduled' || r.state === 'snoozed')
+    .sort((a,b)=>a.due_at-b.due_at));
+  let selectedReminder = $derived.by(() => {
+    const entry = selected;
+    if (!entry || entry.type === 'idea') return null;
+    const id = entry.type === 'note' ? entry.note.id : entry.task.id;
+    return reminders.find(r => r.target_type === entry.type && r.target_id === id && r.state !== 'cancelled') ?? null;
+  });
   let slides = $derived(toSlides(noteBody));
 
   async function refresh(): Promise<void> {
     try {
-      const [n, t, i] = await Promise.all([notesApi.list(), tasksApi.list(), inboxApi.list()]);
+      const [n, t, i, r, h] = await Promise.all([
+        notesApi.list(), tasksApi.list(), inboxApi.list(), remindersApi.list(), remindersApi.history()
+      ]);
       notes = n;
       tasks = t;
       ideas = i;
+      reminders = r;
+      reminderHistory = h;
       error = '';
     } catch (e) {
       error = 'Não foi possível carregar seus dados: ' + String(e);
@@ -105,7 +126,7 @@
     const dayClock = setInterval(() => { clock = new Date(); }, 60_000);
     const unlisteners: Array<() => void> = [];
     void refresh();
-    for (const eventName of ['notes:changed', 'tasks:changed', 'inbox:changed']) {
+    for (const eventName of ['notes:changed', 'tasks:changed', 'inbox:changed', 'reminders:changed']) {
       void listen(eventName, () => { if (alive) void refresh(); })
         .then(dispose => { if (alive) unlisteners.push(dispose); else dispose(); });
     }
@@ -219,6 +240,13 @@
     presenting = false;
     slideIndex = 0;
     const entry = entries.find(item => item.key === key);
+    if (entry && entry.type !== 'idea') {
+      const entryId = entry.type === 'note' ? entry.note.id : entry.task.id;
+      const reminder = reminders.find(r => r.target_type === entry.type && r.target_id === entryId && r.state !== 'cancelled' && r.state !== 'done');
+      reminderAt = reminder ? toLocalInput(reminder.due_at)
+        : entry.type === 'task' ? toLocalInput(entry.task.due_at) : '';
+      reminderRepeat = reminder?.repeat_rule ?? 'none';
+    } else { reminderAt = ''; reminderRepeat = 'none'; }
     if (entry?.type === 'note') {
       draftNoteId = entry.note.id;
       noteTitle = entry.note.title;
@@ -458,12 +486,58 @@
     finally { backupBusy = false; }
   }
 
-  async function updateReminder(note: Note, value: string) {
-    if (!(await flushDraft())) return;
-    const at = value ? new Date(value).getTime() : null;
-    if (at !== null && !Number.isFinite(at)) { error = 'Data inválida.'; return; }
-    try { await notesApi.remind(note.id, at); await refresh(); }
-    catch (e) { error = 'Falha ao salvar lembrete: ' + String(e); }
+  async function saveReminder() {
+    const entry = selected;
+    if (!entry || entry.type === 'idea' || reminderBusy || !(await flushDraft())) return;
+    const timestamp = reminderAt ? new Date(reminderAt).getTime() : NaN;
+    if (!Number.isFinite(timestamp) || timestamp < 1) {
+      error = 'Escolha uma data e horário válidos para ser avisado.';
+      return;
+    }
+    const id = entry.type === 'note' ? entry.note.id : entry.task.id;
+    reminderBusy = true;
+    try {
+      await remindersApi.schedule(entry.type, id, timestamp, reminderRepeat);
+      await refresh();
+    } catch (e) { error = 'Não foi possível agendar: ' + String(e); }
+    finally { reminderBusy = false; }
+  }
+
+  async function removeReminder() {
+    const entry = selected;
+    if (!entry || entry.type === 'idea' || reminderBusy || !(await flushDraft())) return;
+    const id = entry.type === 'note' ? entry.note.id : entry.task.id;
+    reminderBusy = true;
+    try {
+      await remindersApi.cancel(entry.type, id);
+      reminderAt = ''; reminderRepeat = 'none';
+      await refresh();
+    } catch (e) { error = 'Não foi possível desativar lembrete: ' + String(e); }
+    finally { reminderBusy = false; }
+  }
+
+  async function snoozeReminder(item: Reminder, minutes: 5 | 15 | 30 | 60 | 180 | 1440) {
+    if (reminderBusy || !(await flushDraft())) return;
+    reminderBusy = true;
+    try {
+      await remindersApi.snooze(item.id, minutes);
+      await refresh();
+    } catch (e) { error = 'Não foi possível adiar: ' + String(e); }
+    finally { reminderBusy = false; }
+  }
+
+  async function acknowledgeReminder(item: Reminder) {
+    if (reminderBusy || !(await flushDraft())) return;
+    reminderBusy = true;
+    try {
+      await remindersApi.acknowledge(item.id);
+      await refresh();
+    } catch (e) { error = 'Não foi possível concluir o lembrete: ' + String(e); }
+    finally { reminderBusy = false; }
+  }
+
+  async function openReminder(item: Reminder) {
+    await archiveEntry(item.target_type + ':' + item.target_id);
   }
 
   async function floatNote(note: Note) {
@@ -515,7 +589,7 @@
       <button class:rx-current={view === 'now'} onclick={() => { void switchView('now'); }}><CircleDot size={18}/> Agora</button>
       <button class:rx-current={view === 'archive'} onclick={() => { void switchView('archive'); }}><Archive size={18}/> Arquivo</button>
     </nav>
-    <div class="rx-sidebar-foot"><span class="rx-local-dot"></span> Dados locais <span class="rx-build">α3</span></div>
+    <div class="rx-sidebar-foot"><span class="rx-local-dot"></span> Dados locais <span class="rx-build">α5</span></div>
   </aside>
 
   <main class="rx-main">
@@ -591,13 +665,53 @@
           </div>
         {/if}
 
-        {#if dueNotes.length > 0}
-          <div class="rx-reminders">
-            <h3><Bell size={15}/> Lembretes agendados</h3>
-            {#each dueNotes.slice(0, 3) as note (note.id)}
-              <button onclick={() => { void archiveEntry('note:' + note.id); }}><span>{note.title || 'Nota sem título'}</span><small>{formatDateTime(note.remind_at)}</small></button>
+        {#if attentionReminders.length > 0 || upcomingReminders.length > 0 || reminderHistory.length > 0}
+          <section class="rx-reminders-v2" aria-label="Lembretes e notificações">
+            <div class="rx-reminder-heading">
+              <h3><Bell size={16}/> Lembretes</h3>
+              {#if attentionReminders.length > 0}
+                <span class="rx-reminder-count">{attentionReminders.length} precisa(m) de atenção</span>
+              {/if}
+            </div>
+            {#each (showAllReminders ? attentionReminders : attentionReminders.slice(0, 3)) as item (item.id)}
+              <div class="rx-reminder-attention">
+                <button class="rx-reminder-title" onclick={() => { void openReminder(item); }}>
+                  <strong>{item.title}</strong>
+                  <small>{item.target_type === 'task' ? 'Tarefa' : 'Nota'} · Venceu {formatDateTime(item.anchor_at)}</small>
+                  {#if item.last_error}<small class="rx-notification-error">Aviso do Windows não confirmado · abra para conferir</small>{/if}
+                </button>
+                <div class="rx-reminder-actions">
+                  <button disabled={reminderBusy} onclick={() => { void snoozeReminder(item, 15); }}><AlarmClock size={13}/> 15 min</button>
+                  <button disabled={reminderBusy} onclick={() => { void snoozeReminder(item, 60); }}>1 h</button>
+                  <button class="rx-resolve-reminder" disabled={reminderBusy} onclick={() => { void acknowledgeReminder(item); }}><CheckCheck size={13}/> Resolvido</button>
+                </div>
+              </div>
             {/each}
-          </div>
+            {#if attentionReminders.length > 3}
+              <button class="rx-more-reminders" onclick={() => showAllReminders = !showAllReminders}>
+                {showAllReminders ? 'Recolher' : 'Mostrar todos os ' + attentionReminders.length + ' vencidos'}
+              </button>
+            {/if}
+            {#if upcomingReminders.length > 0}
+              <p class="rx-reminder-section-label">PRÓXIMOS</p>
+              {#each upcomingReminders.slice(0, 3) as item (item.id)}
+                <button class="rx-reminder-upcoming" onclick={() => { void openReminder(item); }}>
+                  <span>{item.title}{#if item.repeat_rule !== 'none'} <Repeat2 size={12}/>{/if}</span>
+                  <small>{item.state === 'snoozed' ? 'Adiado até ' : ''}{formatDateTime(item.due_at)}</small>
+                </button>
+              {/each}
+            {/if}
+            {#if reminderHistory.length > 0}
+              <details class="rx-reminder-history">
+                <summary>Histórico de lembretes</summary>
+                {#each reminderHistory.slice(0, 10) as entry (entry.id)}
+                  <div><span>{entry.kind === 'acknowledged' ? 'Resolvido' : entry.kind === 'snoozed' ? 'Adiado' : entry.kind === 'attention' ? 'Vencido' : entry.kind === 'dispatched' ? 'Aviso enviado ao Windows' : entry.kind === 'dispatch_failed' ? 'Falha no aviso' : entry.kind === 'cancelled' ? 'Desativado' : 'Agendado'}</span>
+                    <small>{entry.target_type === 'task' ? 'Tarefa' : 'Nota'} · {formatDateTime(entry.occurred_at)}</small>
+                  </div>
+                {/each}
+              </details>
+            {/if}
+          </section>
         {/if}
 
         <form class="rx-capture-inline" onsubmit={(e) => { e.preventDefault(); void captureInline(); }}>
@@ -613,7 +727,7 @@
             <button class="rx-capture-submit" type="submit" aria-label={captureKind === 'idea' ? 'Guardar ideia' : 'Criar tarefa'} title={captureKind === 'idea' ? 'Guardar ideia' : 'Criar tarefa'} disabled={!newText.trim() || busy}><ArrowRight size={18}/></button>
           </div>
           {#if captureKind === 'task' && smartDraft.recognized}
-            <p class="rx-smart-preview"><CalendarClock size={14}/> {smartDraft.label} <span>· Prazo não envia notificação ainda</span></p>
+            <p class="rx-smart-preview"><CalendarClock size={14}/> {smartDraft.label} <span>· Ative um aviso nos detalhes da tarefa</span></p>
           {/if}
           <p class="rx-compose-tip">Ex.: Revisar slides amanhã às 15h · Enter para salvar</p>
         </form>
@@ -690,7 +804,41 @@
               {#if selected.task.bucket === 'later'}
                 <label class="rx-field"><span>Voltar para Hoje em (opcional)</span><input type="date" value={selected.task.planned_for === null ? '' : toLocalInput(selected.task.planned_for).slice(0, 10)} onchange={(e) => { void setPlannedDate(selected.task, e.currentTarget.value); }}/></label>
               {/if}
-              <label class="rx-field"><span>Prazo (não envia notificação ainda)</span><input type="datetime-local" value={taskDue} onchange={(e) => onTaskEdit('due', e.currentTarget.value)} onblur={() => { void saveTask(selected.task); }}/></label>
+              <label class="rx-field"><span>Prazo da tarefa (informativo)</span><input type="datetime-local" value={taskDue} onchange={(e) => onTaskEdit('due', e.currentTarget.value)} onblur={() => { void saveTask(selected.task); }}/></label>
+              <div class="rx-reminder-editor" aria-label="Notificações e repetição">
+                <h3><Bell size={15}/> Notificação</h3>
+                <p>Escolha quando o RECALL deve avisar. O prazo e o período Hoje/Depois são independentes.</p>
+                <label class="rx-field"><span>Me lembrar em</span>
+                  <input type="datetime-local" value={reminderAt}
+                    oninput={(e) => reminderAt = e.currentTarget.value}/>
+                </label>
+                <label class="rx-field"><span>Repetir</span>
+                  <select value={reminderRepeat}
+                    onchange={(e) => reminderRepeat = e.currentTarget.value as ReminderRule}>
+                    <option value="none">Uma vez</option>
+                    <option value="daily">Todos os dias</option>
+                    <option value="weekly">Toda semana</option>
+                    <option value="monthly">Todo mês</option>
+                  </select>
+                </label>
+                {#if selectedReminder}
+                  <p class="rx-reminder-state">
+                    {selectedReminder.state === 'attention' ? 'Precisa de atenção' : selectedReminder.state === 'snoozed' ? 'Adiado' : selectedReminder.state === 'done' ? 'Resolvido' : 'Agendado'}
+                    · {repeatLabel[selectedReminder.repeat_rule]} · {formatDateTime(selectedReminder.due_at)}
+                  </p>
+                {/if}
+                <div class="rx-reminder-actions">
+                  <button disabled={reminderBusy || !reminderAt} onclick={() => { void saveReminder(); }}><Bell size={14}/> Salvar lembrete</button>
+                  {#if selectedReminder && selectedReminder.state !== 'done'}
+                    <button disabled={reminderBusy} onclick={() => { void removeReminder(); }}>Desativar</button>
+                  {/if}
+                  {#if selectedReminder?.state === 'attention'}
+                    <button disabled={reminderBusy} onclick={() => { void snoozeReminder(selectedReminder, 15); }}>Adiar 15 min</button>
+                    <button disabled={reminderBusy} onclick={() => { void acknowledgeReminder(selectedReminder); }}>Resolvido</button>
+                  {/if}
+                </div>
+                <small class="rx-reminder-hint">O aviso é enviado quando o aplicativo está em execução. Se ficar fechado, o lembrete vencido reaparece no RECALL na próxima abertura.</small>
+              </div>
               <p class="rx-task-save" aria-live="polite"><Check size={13}/>{taskSaving ? 'Salvando...' : taskDirty ? 'Alterações pendentes' : 'Salvo automaticamente'}</p>
               <div class="rx-actions">
                 <button class="rx-primary" disabled={busy} onclick={() => { void focusAndGo(selected.task.id); }}><Target size={16}/> {focusedTaskId === selected.task.id ? 'Em foco' : 'Focar agora'}</button>
@@ -706,7 +854,41 @@
               <textarea class="rx-note-body" aria-label="Texto da nota" placeholder="Escreva aqui..." value={noteBody} oninput={(e) => onNoteEdit('body', e.currentTarget.value)} onblur={() => { void flushNote(); }}></textarea>
               <div class="rx-save-indicator"><Check size={13}/>{noteConflict ? 'Conflito: faça uma cópia' : noteSaving ? 'Salvando...' : noteDirty ? 'Alterações pendentes' : 'Salvo automaticamente'}</div>
               <div class="rx-note-options">
-                <label class="rx-field"><span><Bell size={15}/> Lembrar desta nota</span><input type="datetime-local" value={toLocalInput(selected.note.remind_at)} onchange={(e) => { void updateReminder(selected.note, e.currentTarget.value); }}/></label>
+                
+              <div class="rx-reminder-editor" aria-label="Notificações e repetição">
+                <h3><Bell size={15}/> Notificação</h3>
+                <p>Escolha quando o RECALL deve avisar. O prazo e o período Hoje/Depois são independentes.</p>
+                <label class="rx-field"><span>Me lembrar em</span>
+                  <input type="datetime-local" value={reminderAt}
+                    oninput={(e) => reminderAt = e.currentTarget.value}/>
+                </label>
+                <label class="rx-field"><span>Repetir</span>
+                  <select value={reminderRepeat}
+                    onchange={(e) => reminderRepeat = e.currentTarget.value as ReminderRule}>
+                    <option value="none">Uma vez</option>
+                    <option value="daily">Todos os dias</option>
+                    <option value="weekly">Toda semana</option>
+                    <option value="monthly">Todo mês</option>
+                  </select>
+                </label>
+                {#if selectedReminder}
+                  <p class="rx-reminder-state">
+                    {selectedReminder.state === 'attention' ? 'Precisa de atenção' : selectedReminder.state === 'snoozed' ? 'Adiado' : selectedReminder.state === 'done' ? 'Resolvido' : 'Agendado'}
+                    · {repeatLabel[selectedReminder.repeat_rule]} · {formatDateTime(selectedReminder.due_at)}
+                  </p>
+                {/if}
+                <div class="rx-reminder-actions">
+                  <button disabled={reminderBusy || !reminderAt} onclick={() => { void saveReminder(); }}><Bell size={14}/> Salvar lembrete</button>
+                  {#if selectedReminder && selectedReminder.state !== 'done'}
+                    <button disabled={reminderBusy} onclick={() => { void removeReminder(); }}>Desativar</button>
+                  {/if}
+                  {#if selectedReminder?.state === 'attention'}
+                    <button disabled={reminderBusy} onclick={() => { void snoozeReminder(selectedReminder, 15); }}>Adiar 15 min</button>
+                    <button disabled={reminderBusy} onclick={() => { void acknowledgeReminder(selectedReminder); }}>Resolvido</button>
+                  {/if}
+                </div>
+                <small class="rx-reminder-hint">O aviso é enviado quando o aplicativo está em execução. Se ficar fechado, o lembrete vencido reaparece no RECALL na próxima abertura.</small>
+              </div>
                 <div class="rx-actions">
                   <button class="rx-subtle" onclick={() => { void floatNote(selected.note); }}><MonitorUp size={16}/> Abrir cartão flutuante</button>
                   <button class="rx-subtle" onclick={() => { void flushNote().then(ok => { if (ok) { slideIndex = 0; presenting = true; } }); }}><Presentation size={16}/> Apresentar</button>
