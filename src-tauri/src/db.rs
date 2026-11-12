@@ -31,6 +31,7 @@ pub struct BackupInfo {
     pub file_name: String,
     pub created_at: i64,
     pub size_bytes: u64,
+    pub file_path: String,
 }
 
 // SQLite itself creates a consistent WAL-aware snapshot. A .partial file is never
@@ -63,7 +64,7 @@ pub async fn create_backup(pool: &SqlitePool, db_path: &Path, purpose: &str) -> 
     if result.is_err() { let _ = fs::remove_file(&partial); }
     result?;
     let size_bytes = fs::metadata(&target).map_err(|e| e.to_string())?.len();
-    Ok(BackupInfo { file_name, created_at, size_bytes })
+    Ok(BackupInfo { file_name, created_at, size_bytes, file_path: target.to_string_lossy().to_string() })
 }
 
 pub fn list_backups(db_path: &Path) -> Result<Vec<BackupInfo>, String> {
@@ -78,7 +79,7 @@ pub fn list_backups(db_path: &Path) -> Result<Vec<BackupInfo>, String> {
         if !metadata.is_file() { continue; }
         let modified = metadata.modified().ok().and_then(|m| m.duration_since(UNIX_EPOCH).ok())
             .map(|m| m.as_millis() as i64).unwrap_or(0);
-        items.push(BackupInfo { file_name: name, created_at: modified, size_bytes: metadata.len() });
+        items.push(BackupInfo { file_name: name, created_at: modified, size_bytes: metadata.len(), file_path: e.path().to_string_lossy().to_string() });
     }
     items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(items)
@@ -188,6 +189,15 @@ pub async fn save(pool: &SqlitePool, id: &str, title: &str, body: &str, expected
         .execute(pool).await?;
     if result.rows_affected() == 0 { return Ok(None); }
     get(pool, id).await
+}
+
+pub async fn create_copy(pool: &SqlitePool, title: &str, body: &str, kind: &str) -> Result<Note, sqlx::Error> {
+    let id = Uuid::new_v4().to_string();
+    let now = now_ms();
+    sqlx::query("INSERT INTO notes(id,title,body,kind,created_at,updated_at) VALUES(?,?,?,?,?,?)")
+        .bind(&id).bind(title).bind(body).bind(kind).bind(now).bind(now)
+        .execute(pool).await?;
+    get(pool, &id).await?.ok_or(sqlx::Error::RowNotFound)
 }
 
 pub async fn set_pin(pool: &SqlitePool, id: &str, pinned: bool) -> Result<Note, sqlx::Error> {

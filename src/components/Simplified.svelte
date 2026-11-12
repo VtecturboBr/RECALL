@@ -4,9 +4,9 @@
   import {
     BrainCircuit, CircleDot, Archive, Search, Plus, Check, Circle, Bell,
     FileText, Pencil, CalendarClock, MonitorUp, Presentation, ChevronLeft,
-    ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw, Target
+    ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw, Target, ShieldCheck
   } from 'lucide-svelte';
-  import { notesApi, tasksApi, inboxApi, formatDateTime, toLocalInput } from '../lib/api';
+  import { notesApi, tasksApi, inboxApi, backupsApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
@@ -34,6 +34,21 @@
   let noteTitle = $state('');
   let noteBody = $state('');
   let noteDirty = $state(false);
+  let noteRevision = $state(0);
+  let noteConflict = $state(false);
+  let backupBusy = $state(false);
+  let backupMessage = $state('');
+  function draftKey(id: string) { return 'recall-note-draft:' + id; }
+  function preserveNoteDraft() {
+    if (!draftNoteId) return;
+    try {
+      localStorage.setItem(draftKey(draftNoteId),
+        JSON.stringify({title:noteTitle,body:noteBody,revision:noteRevision}));
+    } catch { /* Database save remains authoritative; storage may be full. */ }
+  }
+  function discardLocalDraft(id: string) {
+    try { localStorage.removeItem(draftKey(id)); } catch { /* Storage unavailable. */ }
+  }
   let noteSaving = $state(false);
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let saveInFlight: Promise<boolean> | null = null;
@@ -152,6 +167,7 @@
     if (field === 'title') noteTitle = text;
     else noteBody = text;
     noteDirty = true;
+    preserveNoteDraft();
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { void flushNote(); }, 650);
   }
@@ -166,16 +182,26 @@
     const id = draftNoteId;
     const title = noteTitle;
     const body = noteBody;
+    const expectedRevision = noteRevision;
     noteDirty = false;
     noteSaving = true;
-    const operation: Promise<boolean> = notesApi.save(id, title, body)
+    const operation: Promise<boolean> = notesApi.save(id, title, body, expectedRevision)
       .then(saved => {
         notes = notes.map(n => n.id === saved.id ? saved : n);
+        if (draftNoteId === id) {
+          noteRevision = saved.revision;
+          noteConflict = false;
+          if (!noteDirty) discardLocalDraft(id);
+        }
         return true;
       })
       .catch(e => {
         noteDirty = true;
-        error = 'Não foi possível salvar sua nota. O texto continua aqui: ' + String(e);
+        noteConflict = String(e).includes('CONFLITO_REVISAO');
+        preserveNoteDraft();
+        error = noteConflict
+          ? 'Esta nota mudou em outra janela. Suas alterações foram preservadas; salve uma cópia antes de continuar.'
+          : 'Não foi possível salvar sua nota. O rascunho continua no editor: ' + String(e);
         return false;
       });
     saveInFlight = operation;
@@ -197,10 +223,27 @@
       draftNoteId = entry.note.id;
       noteTitle = entry.note.title;
       noteBody = entry.note.body;
+      noteRevision = entry.note.revision;
+      noteConflict = false;
       noteDirty = false;
+      try {
+        const cached = localStorage.getItem(draftKey(entry.note.id));
+        if (cached) {
+          const draft = JSON.parse(cached) as {title?:string;body?:string;revision?:number};
+          if (typeof draft.title === 'string' && typeof draft.body === 'string'
+              && (draft.title !== entry.note.title || draft.body !== entry.note.body)) {
+            noteTitle = draft.title;
+            noteBody = draft.body;
+            noteRevision = typeof draft.revision === 'number' ? draft.revision : entry.note.revision;
+            noteDirty = true;
+            error = 'Rascunho local recuperado para esta nota. Confira antes de continuar.';
+          } else { discardLocalDraft(entry.note.id); }
+        }
+      } catch { /* Invalid cached draft is left untouched. */ }
     } else {
       draftNoteId = null;
       noteDirty = false;
+      noteConflict = false;
     }
     if (entry?.type === 'idea') {
       ideaText = entry.idea.text;
@@ -385,6 +428,36 @@
     return true;
   }
 
+  async function saveConflictCopy() {
+    if (!selected || selected.type !== 'note' || !draftNoteId || backupBusy) return;
+    const originalId = draftNoteId;
+    try {
+      const saved = await notesApi.copy(noteTitle, noteBody, selected.note.kind);
+      discardLocalDraft(originalId);
+      noteDirty = false;
+      noteConflict = false;
+      draftNoteId = saved.id;
+      noteRevision = saved.revision;
+      notes = [saved, ...notes.filter(n => n.id !== saved.id)];
+      selectedKey = 'note:' + saved.id;
+      error = 'Cópia de segurança da edição criada como uma nova nota.';
+    } catch (e) {
+      preserveNoteDraft();
+      error = 'Falha ao salvar cópia. O texto continua no editor: ' + String(e);
+    }
+  }
+
+  async function createBackup() {
+    if (backupBusy || !(await flushDraft())) return;
+    backupBusy = true;
+    backupMessage = '';
+    try {
+      const file = await backupsApi.create();
+      backupMessage = 'Backup verificado: ' + file.file_path;
+    } catch (e) { error = 'Falha ao criar backup: ' + String(e); }
+    finally { backupBusy = false; }
+  }
+
   async function updateReminder(note: Note, value: string) {
     if (!(await flushDraft())) return;
     const at = value ? new Date(value).getTime() : null;
@@ -451,11 +524,21 @@
       <span class="rx-page-name">{view === 'now' ? 'Agora' : 'Arquivo'}</span>
       <span class="rx-spacer"></span>
       <button class="rx-top-search" onclick={() => { void switchView('archive').then(() => { if (view === 'archive') document.querySelector<HTMLInputElement>('.rx-search input')?.focus(); }); }} title="Pesquisar (Ctrl+K)" aria-label="Pesquisar"><Search size={18}/></button>
+      <button class="rx-icon-button" title="Criar backup seguro dos dados" aria-label="Criar backup dos dados" disabled={backupBusy} onclick={() => { void createBackup(); }}><ShieldCheck size={18}/></button>
       <button class="rx-add-button" onclick={() => { void captureWindow(); }}><Plus size={17}/> Capturar</button>
     </header>
 
     {#if error}
       <div class="rx-error" role="alert">{error}<button aria-label="Fechar erro" onclick={() => error = ''}><X size={16}/></button></div>
+    {/if}
+    {#if backupMessage}
+      <div class="rx-backup-result" role="status"><ShieldCheck size={15}/><span>{backupMessage}</span><button aria-label="Fechar confirmação" onclick={() => backupMessage = ''}><X size={15}/></button></div>
+    {/if}
+    {#if noteConflict && selected?.type === 'note'}
+      <div class="rx-conflict" role="alert">
+        <strong>Conflito de edição detectado.</strong> A outra janela tem alterações mais recentes.
+        <button onclick={() => { void saveConflictCopy(); }}>Salvar meu texto como outra nota</button>
+      </div>
     {/if}
 
     {#if loading}
@@ -621,7 +704,7 @@
               <div class="rx-detail-head"><span>{selected.note.kind === 'presentation' ? 'APRESENTAÇÃO' : 'NOTA'}</span><button class="rx-icon-button" onclick={() => { void deleteSelected(); }} title="Excluir nota" aria-label="Excluir nota"><Trash2 size={17}/></button></div>
               <input class="rx-note-title" aria-label="Título da nota" placeholder="Sem título" value={noteTitle} oninput={(e) => onNoteEdit('title', e.currentTarget.value)} onblur={() => { void flushNote(); }}/>
               <textarea class="rx-note-body" aria-label="Texto da nota" placeholder="Escreva aqui..." value={noteBody} oninput={(e) => onNoteEdit('body', e.currentTarget.value)} onblur={() => { void flushNote(); }}></textarea>
-              <div class="rx-save-indicator"><Check size={13}/>{noteSaving ? 'Salvando...' : noteDirty ? 'Alterações pendentes' : 'Salvo automaticamente'}</div>
+              <div class="rx-save-indicator"><Check size={13}/>{noteConflict ? 'Conflito: faça uma cópia' : noteSaving ? 'Salvando...' : noteDirty ? 'Alterações pendentes' : 'Salvo automaticamente'}</div>
               <div class="rx-note-options">
                 <label class="rx-field"><span><Bell size={15}/> Lembrar desta nota</span><input type="datetime-local" value={toLocalInput(selected.note.remind_at)} onchange={(e) => { void updateReminder(selected.note, e.currentTarget.value); }}/></label>
                 <div class="rx-actions">

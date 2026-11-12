@@ -5,7 +5,8 @@ export const notesApi = {
   list: () => invoke<Note[]>('list_notes'),
   get: (id: string) => invoke<Note | null>('get_note', { id }),
   create: (kind: 'note' | 'presentation') => invoke<Note>('create_note', { kind }),
-  save: (id: string, title: string, body: string, expectedRevision: number) => invoke<Note>('save_note', { id, title, body, expectedRevision }),
+  save: (id: string, title: string, body: string, expectedRevision = 0) => invoke<Note>('save_note', { id, title, body, expectedRevision }),
+  copy: (title: string, body: string, kind: Note['kind']) => invoke<Note>('create_note_copy', { title, body, kind }),
   pin: (id: string, pinned: boolean) => invoke<Note>('set_note_pin', { id, pinned }),
   remind: (id: string, remindAt: number | null) => invoke<Note>('set_note_reminder', { id, remindAt }),
   delete: (id: string) => invoke<void>('delete_note', { id }),
@@ -50,6 +51,7 @@ export interface BackupInfo {
   file_name: string;
   created_at: number;
   size_bytes: number;
+  file_path: string;
 }
 export const backupsApi = {
   create: () => invoke<BackupInfo>('create_data_backup'),
