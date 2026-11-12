@@ -1,4 +1,6 @@
 mod db;
+mod tasks;
+mod inbox;
 
 use sqlx::SqlitePool;
 use tauri::{Emitter, Manager};
@@ -76,11 +78,73 @@ async fn delete_note(state: tauri::State<'_, AppState>, app: tauri::AppHandle, i
     Ok(())
 }
 
+#[tauri::command]
+async fn list_tasks(state: tauri::State<'_, AppState>) -> Result<Vec<tasks::Task>, String> {
+    tasks::list(&state.pool).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn create_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, title: String) -> Result<tasks::Task, String> {
+    if title.trim().is_empty() || title.chars().count() > 250 { return Err("Título inválido".into()); }
+    let task = tasks::create(&state.pool, &title).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("tasks:changed", &task.id);
+    Ok(task)
+}
+#[tauri::command]
+async fn update_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, title: String, details: String, due_at: Option<i64>) -> Result<tasks::Task, String> {
+    if title.trim().is_empty() || title.chars().count() > 250 || details.chars().count() > 100_000 { return Err("Tarefa inválida".into()); }
+    let task = tasks::update(&state.pool, &id, &title, &details, due_at).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("tasks:changed", &id);
+    Ok(task)
+}
+#[tauri::command]
+async fn set_task_completed(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, completed: bool) -> Result<tasks::Task, String> {
+    let task = tasks::set_completed(&state.pool, &id, completed).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("tasks:changed", &id);
+    Ok(task)
+}
+#[tauri::command]
+async fn delete_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String) -> Result<(), String> {
+    tasks::delete(&state.pool, &id).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("tasks:changed", &id);
+    Ok(())
+}
+#[tauri::command]
+async fn list_inbox(state: tauri::State<'_, AppState>) -> Result<Vec<inbox::InboxItem>, String> {
+    inbox::list(&state.pool).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn capture_inbox(state: tauri::State<'_, AppState>, app: tauri::AppHandle, text: String) -> Result<inbox::InboxItem, String> {
+    if text.trim().is_empty() || text.chars().count() > 100_000 { return Err("Escreva uma ideia válida".into()); }
+    let item = inbox::capture(&state.pool, &text).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("inbox:changed", &item.id);
+    Ok(item)
+}
+#[tauri::command]
+async fn dismiss_inbox(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String) -> Result<(), String> {
+    inbox::dismiss(&state.pool, &id).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("inbox:changed", &id);
+    Ok(())
+}
+#[tauri::command]
+async fn inbox_to_note(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String) -> Result<db::Note, String> {
+    let note = inbox::to_note(&state.pool, &id).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("inbox:changed", &id);
+    let _ = app.emit("notes:changed", &note.id);
+    Ok(note)
+}
+#[tauri::command]
+async fn inbox_to_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String) -> Result<tasks::Task, String> {
+    let task = inbox::to_task(&state.pool, &id).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("inbox:changed", &id);
+    let _ = app.emit("tasks:changed", &task.id);
+    Ok(task)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note])
+        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, update_task, set_task_completed, delete_task, list_inbox, capture_inbox, dismiss_inbox, inbox_to_note, inbox_to_task])
         .setup(|app| {
             let path = app.path().app_data_dir()?;
             std::fs::create_dir_all(&path)?;
