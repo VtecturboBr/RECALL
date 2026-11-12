@@ -17,6 +17,8 @@ export interface Task {
   title: string;
   details: string;
   due_at: number | null;
+  bucket: 'today' | 'later' | 'someday';
+  planned_for: number | null;
   completed_at: number | null;
   created_at: number;
   updated_at: number;

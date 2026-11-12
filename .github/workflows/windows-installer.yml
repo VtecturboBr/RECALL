@@ -6,6 +6,7 @@ on:
       - 'feature/v0.5'
       - 'feature/v0.5-simplified-ui'
       - 'feature/v0.5-alpha3-ux'
+      - 'feature/v0.5-alpha4-captura-tempo'
   workflow_dispatch:
 
 permissions:
@@ -64,7 +65,7 @@ jobs:
       - name: Publicar instalador para download
         uses: actions/upload-artifact@v4
         with:
-          name: RECALL-v0.5-alpha3-Windows-x64
+          name: RECALL-v0.5-alpha4-Windows-x64
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/bundle/nsis/SHA256SUMS.txt

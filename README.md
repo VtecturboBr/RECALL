@@ -63,3 +63,11 @@ O desenvolvimento da v0.5 ocorre na branch `feature/v0.5` e no PR #1, sem altera
 ## Validação
 
 O código foi importado de uma versão experimental. O GitHub Actions aprovou Svelte, TypeScript e cargo check no Windows, mas notificações, bandeja, atalho global e instalador ainda precisam de testes interativos no Windows. Não considere a v0.4 uma versão de produção.
+
+## Workflow da nova fase (IA e Codex)
+
+- [AGENTS.md](AGENTS.md): regras para agentes e continuidade.
+- [Workflow](docs/AI_WORKFLOW.md), [skills](docs/AI_SKILLS.md) e [checkpoint](docs/AI_CHECKPOINT.md): decisões, estado verificado e próximos passos.
+- [Configuração portátil](config/ai-workflow.yaml): preferências confirmadas.
+
+A configuração não instala skills e não confirma testes em Windows real; consulte o checkpoint antes de agir.

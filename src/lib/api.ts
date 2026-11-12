@@ -27,6 +27,10 @@ export function toLocalInput(timestamp: number | null): string {
 export const tasksApi = {
   list: () => invoke<Task[]>('list_tasks'),
   create: (title: string) => invoke<Task>('create_task', { title }),
+  createPlanned: (title: string, details: string, bucket: Task['bucket'], plannedFor: number | null, dueAt: number | null) =>
+    invoke<Task>('create_planned_task', { title, details, bucket, plannedFor, dueAt }),
+  plan: (id: string, bucket: Task['bucket'], plannedFor: number | null) =>
+    invoke<Task>('set_task_plan', { id, bucket, plannedFor }),
   update: (id: string, title: string, details: string, dueAt: number | null) =>
     invoke<Task>('update_task', { id, title, details, dueAt }),
   complete: (id: string, completed: boolean) => invoke<Task>('set_task_completed', { id, completed }),

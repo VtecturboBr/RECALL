@@ -1,7 +1,7 @@
 {
   "name": "memoria-externa",
   "private": true,
-  "version": "0.5.0-alpha.3",
+  "version": "0.5.0-alpha.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "desktop": "tauri dev",
     "installer": "tauri build",
-    "test:unit": "node --experimental-strip-types --test tests/workspace.test.mjs"
+    "test:unit": "node --experimental-strip-types --test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

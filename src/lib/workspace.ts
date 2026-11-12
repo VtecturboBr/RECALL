@@ -59,3 +59,16 @@ export function searchWorkspace(
   return entries.filter(entry => (type === 'all' || entry.type === type)
     && (!needle || normalize(entry.title + ' ' + entry.text).includes(needle)));
 }
+
+
+export function taskPeriod(task: Task, now: Date = new Date()): 'today' | 'later' | 'someday' {
+  const bucket = task.bucket ?? 'today'; // Existing Alpha 3 tasks have no plan row.
+  if (bucket !== 'later' || task.planned_for === null || task.planned_for === undefined) return bucket;
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  return task.planned_for < tomorrow ? 'today' : 'later';
+}
+
+export function tasksByPeriod(tasks: Task[], period: 'today' | 'later' | 'someday', now = new Date()): Task[] {
+  return tasks.filter(task => task.deleted_at === null && task.completed_at === null
+    && taskPeriod(task, now) === period);
+}
