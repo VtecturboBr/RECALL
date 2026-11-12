@@ -36,6 +36,12 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Verificar Svelte e TypeScript
         run: npm run check
+      - name: Configurar Python para testes de restauração
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Testar restauração SQLite offline
+        run: python -m unittest discover -s scripts -p "test_*.py"
       - name: Testar busca e organização de itens
         run: npm run test:unit
       - name: Compilar frontend
