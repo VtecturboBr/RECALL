@@ -3,7 +3,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { NotebookPen, Check, X } from 'lucide-svelte';
-  import { notesApi } from '../lib/api';
+  import { inboxApi } from '../lib/api';
 
   let content = $state('');
   let busy = $state(false);
@@ -34,12 +34,12 @@
     if (busy || !content.trim()) return;
     busy = true; failure = '';
     try {
-      await notesApi.capture(content);
+      await inboxApi.capture(content);
       content = '';
       try { localStorage.removeItem(DRAFT_KEY); } catch { /* Storage unavailable. */ }
       await windowHandle.hide();
     } catch (error) {
-      failure = `Sua nota não foi salva. ${String(error)}`;
+      failure = `Sua ideia não foi salva. ${String(error)}`;
     } finally {
       busy = false;
     }
@@ -67,6 +67,6 @@
   </div>
   <footer class="capture-footer">
     <span><kbd>Ctrl</kbd> + <kbd>Enter</kbd> para salvar</span>
-    <button class="capture-save" disabled={!content.trim() || busy} onclick={save}>{#if busy}<span>Salvando...</span>{:else}<Check size={17}/> Salvar nota{/if}</button>
+    <button class="capture-save" disabled={!content.trim() || busy} onclick={save}>{#if busy}<span>Salvando...</span>{:else}<Check size={17}/> Guardar ideia{/if}</button>
   </footer>
 </section>
