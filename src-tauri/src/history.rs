@@ -170,6 +170,7 @@ mod tests {
             sqlx::query(&format!("DROP TRIGGER IF EXISTS {name}"))
                 .execute(pool).await.unwrap();
         }
+        sqlx::query("DROP TABLE focus_sessions").execute(pool).await.unwrap();
         sqlx::query("DROP TABLE content_history").execute(pool).await.unwrap();
         sqlx::query("DROP TABLE inbox_dispositions").execute(pool).await.unwrap();
         sqlx::query("PRAGMA user_version = 4").execute(pool).await.unwrap();
