@@ -11,6 +11,7 @@
   import { openQuickCapture, openSticky } from '../lib/windows';
   import TaskResume from './TaskResume.svelte';
   import FocusSession from './FocusSession.svelte';
+  import LinkedItems from './LinkedItems.svelte';
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../lib/editorSafety';
@@ -1267,6 +1268,25 @@
               </div>
               <p class="re-editor-tip">Dica: separe cartões de uma apresentação usando <code>---</code> em uma linha.</p>
             </div>
+          {/if}
+          {#if selected}
+            {#key selected.key}
+              <div class="re-linked-wrapper">
+                <LinkedItems
+                  itemType={selected.type}
+                  itemId={selected.type === 'note' ? selected.note.id : selected.type === 'task' ? selected.task.id : selected.idea.id}
+                  entries={entries}
+                  onOpen={(key) => {
+                    void openEntry(key).then(() => {
+                      if (selectedKey === key) {
+                        archiveFilter = 'all';
+                        archivePeriod = 'all';
+                        search = '';
+                      }
+                    });
+                  }}/>
+              </div>
+            {/key}
           {/if}
         </section>
       </div>
