@@ -94,3 +94,15 @@ Após cada entrega concreta: registrar branch, commit/PR, funcionalidades modifi
 - **Cobertura adicionada:** testes Rust para duas gravações concorrentes, retomada após reinício e backup pré-migração; teste Node para índice de cartão inválido/obsoleto.
 - **Pendências:** aprovação de CI no último commit e produção do instalador, instalação e testes manuais Windows com banco de teste, captura/sticky, zoom, atualizações entre janelas, encerramento forçado e notificações. Não declarar estabilidade com base apenas na CI.
 - **Documentação:** `docs/ALPHA_7_ONDE_PAREI.md`.
+
+## Alpha 8.1 — migração SQLite v5 (13/11/2026; branch de desenvolvimento)
+
+- **Plano:** PR #15 `plan/v0.5-alpha8-recuperacao-organizacao`; implementação A8.1 em `feature/v0.5-alpha8-migracao` (PR #16, draft), empilhada sobre o PR de planejamento. Não fazer merge na `main`.
+- **Escopo implementado:** exclusivamente backend de preservação de dados e migração; **sem lixeira, interface ou restauração** nesta etapa.
+- **`src-tauri/src/history.rs`:** histórico `content_history` com baseline de notas/apresentações, tarefas, ideias e checkpoints de retomada. Triggers SQL `BEFORE UPDATE` capturam texto anterior, inclusive quando uma versão legada grava diretamente no banco. Gravações de texto idêntico não criam histórico redundante. Revisão de checkpoint alterado externamente é incrementada para impedir CAS obsoleto.
+- **`inbox_dispositions`:** descarte e conversões novas passam a ter marcador explícito e destino quando houver. Ideias antigas com `processed_at` **não são classificadas automaticamente**, pois isso poderia confundir conversão com exclusão.
+- **Migração v5:** snapshot `pre-alpha8` obrigatório e validado `quick_check` antes de alterar banco existente; tabelas, índices, baselines, triggers e `PRAGMA user_version=5` em uma única transação. Falha de backup ou de migração bloqueia startup; banco v5 com histórico incompleto é recusado, sem reconstrução fictícia.
+- **Testes:** upgrade e reinício idempotente, rollback de migração e disposição, backup impedido, SQL legado, Unicode/emoji, preservação de conteúdo, concorrência CAS e compatibilidade dos testes da Alpha 7.
+- **Atenção:** banco v5 não deve ser aberto deliberadamente por cópias antigas do RECALL sem antes considerar compatibilidade e guardar backup. O histórico aumenta uso do disco e não aplica criptografia adicional.
+- **Próximo passo:** CI Windows do último commit, revisão de integridade e teste manual sobre cópia do banco Alpha 7. A8.2 terá outro branch e PR independente.
+- **Guia:** `docs/ALPHA8_1_MIGRACAO.md`.
