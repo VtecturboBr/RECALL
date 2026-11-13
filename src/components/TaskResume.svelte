@@ -36,7 +36,9 @@
   async function load() {
     try {
       const remote = await tasksApi.getResume(taskId);
-      if (!active) return;
+      // A remote request may complete after typing has begun. Never clobber
+      // a local draft or an in-flight save with an older response.
+      if (!active || dirty || saving) return;
       lastContext = remote?.last_context ?? '';
       nextStep = remote?.next_step ?? '';
       revision = remote?.revision ?? 0;
