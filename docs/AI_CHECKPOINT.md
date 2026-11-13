@@ -72,3 +72,13 @@ Após cada entrega concreta: registrar branch, commit/PR, funcionalidades modifi
 - Direção adotada: editorial minimalista, comparada com central operacional e workspace de cartões; vermelho #E90530 como acento.
 - Arquivos-chave: `src/components/RecallStudio.svelte`, `src/recall.css`, `src/capture-redesign.css`, `src/sticky-redesign.css`, `docs/REDESIGN_ALPHA6.md`.
 - Pendente: validar builds e UI no Windows (foco de teclado, captura, editor, lembretes, backup, cartões). PR separado, sem merge na main.
+
+## Alpha 6 — estabilização pós-auditoria (13/11/2026, rascunho)
+
+- **Referência:** `docs/AUDITORIA_ALPHA6_BUGS_2026-11-12.md` no PR #9 (14 achados); implementação e matriz de testes em `docs/ESTABILIZACAO_ALPHA6.md`.
+- **Sequência de PRs:** #10 (`fix/alpha6-captura-rascunho`) → #11 (`fix/alpha6-integridade-editor`) → #12 (`fix/alpha6-ui-consistencia`) → #13 (`fix/alpha6-notificacoes-seguranca`); branches empilhadas, sem merge na `main`.
+- **Integridade:** captura inline e edições tarefa/ideia recuperáveis; CAS com triggers e cópia em conflito; migração para `user_version=3` com backup verificado; tarefa concluída + lembrete cancelado atomicamente.
+- **Interface:** refresh monotônico, editor não sujo sincronizado entre janelas, notas fixadas acima, filtros/conversão/criação corrigidos, drawer responsivo.
+- **Lembretes:** resumos abrangendo fila pendente, eventos `suppressed`, conteúdo privado removido dos toasts; CSP restritiva do Tauri 2.
+- **CI:** GitHub Actions executa `fix/**` no push. Interpretar apenas a conclusão do commit exato (não assumir status antigo como atual).
+- **Pendente para aprovação:** validar os PRs em CI após o último commit, gerar instalador NSIS, testar rascunhos e concorrência no Windows, testando dados antigos via cópia/backup, zoom, CSP e notificações nativas. Não declarar estável antes disso.
