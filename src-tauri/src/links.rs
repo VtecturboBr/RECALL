@@ -104,6 +104,39 @@ pub async fn add(pool: &SqlitePool, a_type: &str, a_id: &str, b_type: &str, b_id
     Ok(stored)
 }
 
+/// Preserve context when an Inbox idea is converted into a note or task.
+/// The original idea links remain stored for future history/restore, while
+/// all active neighbors become visible on the converted item atomically.
+pub async fn transfer_from_idea_in_tx(
+    tx: &mut sqlx::Transaction<'_,sqlx::Sqlite>,
+    idea_id: &str, target_type: &str, target_id: &str,
+) -> Result<(), sqlx::Error> {
+    validate_endpoint("idea",idea_id)?;
+    validate_endpoint(target_type,target_id)?;
+    let rows: Vec<(String,String,String,String)> = sqlx::query_as(
+        "SELECT left_type,left_id,right_type,right_id FROM item_links
+          WHERE (left_type='idea' AND left_id=?)
+             OR (right_type='idea' AND right_id=?)")
+        .bind(idea_id).bind(idea_id).fetch_all(&mut **tx).await?;
+    for (left_type,left_id,right_type,right_id) in rows {
+        let (other_type,other_id)=if left_type=="idea" && left_id==idea_id {
+            (right_type,right_id)
+        } else {(left_type,left_id)};
+        // Deleted or processed related items stay in original history only.
+        if !exists_active(&mut **tx,&other_type,&other_id).await? { continue; }
+        let ((a_type,a_id),(b_type,b_id))=
+            normalize(target_type,target_id,&other_type,&other_id)?;
+        sqlx::query("INSERT INTO item_links
+            (id,left_type,left_id,right_type,right_id,created_at)
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(left_type,left_id,right_type,right_id) DO NOTHING")
+            .bind(Uuid::new_v4().to_string())
+            .bind(a_type).bind(a_id).bind(b_type).bind(b_id).bind(now_ms())
+            .execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
 pub async fn remove(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     if id.is_empty() || id.len()>128 {return Err(sqlx::Error::RowNotFound);}
     let affected=sqlx::query("DELETE FROM item_links WHERE id=?").bind(id).execute(pool).await?;
