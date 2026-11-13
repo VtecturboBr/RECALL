@@ -5,6 +5,7 @@ mod reminders;
 mod history;
 mod focus;
 mod links;
+mod review;
 
 use sqlx::SqlitePool;
 use tauri::{Emitter, Manager};
@@ -234,6 +235,11 @@ async fn set_task_plan(
 }
 
 #[tauri::command]
+async fn list_daily_review(state: tauri::State<'_, AppState>) -> Result<Vec<review::ReviewItem>, String> {
+    review::list(&state.pool).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn list_reminders(state: tauri::State<'_, AppState>) -> Result<Vec<reminders::Reminder>, String> {
     reminders::list(&state.pool).await.map_err(|e| e.to_string())
 }
@@ -366,6 +372,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, create_note_copy, create_data_backup, list_data_backups, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, create_planned_task, set_task_plan, update_task, get_task_resume, save_task_resume,
             get_active_focus, list_focus_sessions, start_focus_session, heartbeat_focus_session, stop_focus_session,
             list_item_links, add_item_link, remove_item_link,
+            list_daily_review,
             set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task,
             list_reminders, list_reminder_events, schedule_reminder, cancel_reminder,
             snooze_reminder, acknowledge_reminder])

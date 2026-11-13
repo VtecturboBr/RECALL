@@ -46,6 +46,17 @@ export interface TaskResume {
   revision: number;
 }
 
+export type ReviewKind = 'reminder' | 'overdue_task' | 'interrupted_focus' | 'missing_step' | 'stale_task';
+
+export interface DailyReviewItem {
+  kind: ReviewKind;
+  target_type: 'note' | 'task';
+  target_id: string;
+  title: string;
+  description: string;
+  occurred_at: number;
+}
+
 export interface ItemLink {
   id: string;
   item_type: 'note' | 'task' | 'idea';

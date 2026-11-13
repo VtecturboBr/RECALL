@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Note, Task, TaskResume, FocusSession, ItemLink, InboxItem, Reminder, ReminderEvent, ReminderRule } from './types';
+import type { Note, Task, TaskResume, FocusSession, ItemLink, DailyReviewItem, InboxItem, Reminder, ReminderEvent, ReminderRule } from './types';
 
 export const notesApi = {
   list: () => invoke<Note[]>('list_notes'),
@@ -48,6 +48,10 @@ export const focusApi = {
   heartbeat: (id: string) => invoke<FocusSession>('heartbeat_focus_session', { id }),
   stop: (id: string, reason: 'paused' | 'finished', summary: string) =>
     invoke<FocusSession>('stop_focus_session', { id, reason, summary })
+};
+
+export const reviewApi = {
+  list: () => invoke<DailyReviewItem[]>('list_daily_review')
 };
 
 export const linksApi = {
