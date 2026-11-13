@@ -82,3 +82,15 @@ Após cada entrega concreta: registrar branch, commit/PR, funcionalidades modifi
 - **Lembretes:** resumos abrangendo fila pendente, eventos `suppressed`, conteúdo privado removido dos toasts; CSP restritiva do Tauri 2.
 - **CI:** GitHub Actions executa `fix/**` no push. Interpretar apenas a conclusão do commit exato (não assumir status antigo como atual).
 - **Pendente para aprovação:** validar os PRs em CI após o último commit, gerar instalador NSIS, testar rascunhos e concorrência no Windows, testando dados antigos via cópia/backup, zoom, CSP e notificações nativas. Não declarar estável antes disso.
+
+## Alpha 7 — Onde parei? (13/11/2026, experimental)
+
+- **Base:** `fix/alpha6-notificacoes-seguranca`, PR #13; conjunto Alpha 6 com CI Windows e instalador NSIS aprovados, mas sem validação manual no Windows real. Não integrado à `main`.
+- **Nova branch:** `feature/v0.5-alpha7-onde-parei`; [PR #14](https://github.com/VtecturboBr/RECALL/pull/14), em rascunho, sem merge.
+- **Tarefas:** painel recolhível no foco Agora para contexto anterior e próximo passo, autosave e rascunho local recuperável; revisão CAS para alterações concorrentes e ação de salvar cópia em conflito.
+- **Banco:** tabela aditiva `task_resumes`, `PRAGMA user_version=4`, backup SQLite validado `pre-resume` antes de migração do banco existente. Conteúdo antigo e ID do aplicativo mantidos.
+- **Apresentação:** progresso de cartão no armazenamento local por nota e retomada segura; comando Recomeçar.
+- **Versão prévia:** `0.5.0-alpha.7`; workflow próprio para NSIS Alpha 7 em GitHub Actions.
+- **Cobertura adicionada:** testes Rust para duas gravações concorrentes, retomada após reinício e backup pré-migração; teste Node para índice de cartão inválido/obsoleto.
+- **Pendências:** aprovação de CI no último commit e produção do instalador, instalação e testes manuais Windows com banco de teste, captura/sticky, zoom, atualizações entre janelas, encerramento forçado e notificações. Não declarar estabilidade com base apenas na CI.
+- **Documentação:** `docs/ALPHA_7_ONDE_PAREI.md`.

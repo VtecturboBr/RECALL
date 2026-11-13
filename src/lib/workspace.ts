@@ -76,3 +76,11 @@ export function tasksByPeriod(tasks: Task[], period: 'today' | 'later' | 'someda
   return tasks.filter(task => task.deleted_at === null && task.completed_at === null
     && taskPeriod(task, now) === period);
 }
+
+/** A saved presentation position is a hint, never an unchecked array index. */
+export function resumeSlideIndex(stored: string | null, totalSlides: number): number {
+  if (!stored || !(/^[0-9]+$/.test(stored))) return 0;
+  const requested = Number(stored);
+  if (!Number.isSafeInteger(requested)) return 0;
+  return Math.min(requested, Math.max(0, totalSlides - 1));
+}

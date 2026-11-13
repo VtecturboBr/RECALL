@@ -27,6 +27,14 @@ export interface Task {
   revision: number;
 }
 
+export interface TaskResume {
+  task_id: string;
+  last_context: string;
+  next_step: string;
+  updated_at: number;
+  revision: number;
+}
+
 export interface InboxItem {
   id: string;
   text: string;

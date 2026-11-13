@@ -124,6 +124,17 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
         create_backup(&pool, path, "pre-content-revisions").await
             .map_err(|e| sqlx::Error::Protocol(format!("Backup pré-revisões de tarefas e ideias falhou: {e}")))?;
     }
+    // A migration from an existing tasks database must have a verified recovery point.
+    let old_task_table: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tasks'"
+    ).fetch_one(&pool).await?;
+    let old_resume_table: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='task_resumes'"
+    ).fetch_one(&pool).await?;
+    if old_task_table > 0 && old_resume_table == 0 {
+        create_backup(&pool, path, "pre-resume").await
+            .map_err(|e| sqlx::Error::Protocol(format!("Backup pré-retomada falhou: {e}")))?;
+    }
     sqlx::query("CREATE TABLE IF NOT EXISTS notes (
         id TEXT PRIMARY KEY NOT NULL,
         title TEXT NOT NULL DEFAULT '',
@@ -159,7 +170,7 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     crate::inbox::initialize(&pool).await?;
     crate::reminders::initialize(&pool).await?;
     let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await?;
-    if version < 3 { sqlx::query("PRAGMA user_version = 3").execute(&pool).await?; }
+    if version < 4 { sqlx::query("PRAGMA user_version = 4").execute(&pool).await?; }
     Ok(pool)
 }
 

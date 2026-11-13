@@ -9,7 +9,8 @@
   } from 'lucide-svelte';
   import { notesApi, tasksApi, inboxApi, backupsApi, remindersApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
-  import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod } from '../lib/workspace';
+  import TaskResume from './TaskResume.svelte';
+  import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
 
@@ -145,6 +146,23 @@
     return reminders.find(r => r.target_type === entry.type && r.target_id === id && r.state !== 'cancelled') ?? null;
   });
   let slides = $derived(toSlides(noteBody));
+  function slidePositionKey(id: string) { return 'recall-presentation-position:' + id; }
+  function moveSlide(amount: number) {
+    slideIndex = Math.max(0, Math.min(slideIndex + amount, Math.max(0, slides.length - 1)));
+    if (draftNoteId) {
+      try { localStorage.setItem(slidePositionKey(draftNoteId), String(slideIndex)); } catch { /* Best-effort position cache. */ }
+    }
+  }
+  async function openPresentation() {
+    if (!(await flushNote()) || !draftNoteId) return;
+    let restored = 0;
+    try {
+      restored = resumeSlideIndex(localStorage.getItem(slidePositionKey(draftNoteId)), slides.length);
+    } catch { /* Start at first card when storage is unavailable. */ }
+    slideIndex = Math.min(restored, Math.max(0, slides.length - 1));
+    presenting = true;
+  }
+
 
   let refreshGeneration = 0;
   async function refresh(): Promise<void> {
@@ -234,8 +252,8 @@
         presenting = false;
         if (narrowViewport.matches) sidebarVisible = false;
       }
-      if (presenting && event.key === 'ArrowRight') slideIndex = Math.min(slideIndex + 1, slides.length - 1);
-      if (presenting && event.key === 'ArrowLeft') slideIndex = Math.max(slideIndex - 1, 0);
+      if (presenting && event.key === 'ArrowRight') moveSlide(1);
+      if (presenting && event.key === 'ArrowLeft') moveSlide(-1);
     };
     window.addEventListener('keydown', onKey);
     return () => {
@@ -923,6 +941,9 @@
                   <button class="re-primary" disabled={busy} onclick={() => { void completeTask(currentTask); }}><Check size={17}/> Marcar como concluída</button>
                   <button class="re-outline" onclick={() => { void archiveEntry('task:' + currentTask.id); }}>Abrir detalhes <ArrowUpRight size={15}/></button>
                 </div>
+                {#key currentTask.id}
+                  <TaskResume taskId={currentTask.id} taskTitle={currentTask.title}/>
+                {/key}
               </div>
             {:else}
               <div class="re-focus-content re-focus-empty">
@@ -1176,7 +1197,7 @@
               </div>
               <div class="re-editor-footer">
                 <button class="re-outline" onclick={() => { void floatNote(selected.note); }}><MonitorUp size={16}/> Cartão flutuante</button>
-                <button class="re-outline" onclick={() => { void flushNote().then(ok => { if (ok) { slideIndex = 0; presenting = true; } }); }}><Presentation size={16}/> Apresentar</button>
+                <button class="re-outline" onclick={() => { void openPresentation(); }}><Presentation size={16}/> Apresentar / continuar</button>
               </div>
               <p class="re-editor-tip">Dica: separe cartões de uma apresentação usando <code>---</code> em uma linha.</p>
             </div>
@@ -1191,8 +1212,9 @@
         <div class="re-presentation-content"><div class="re-slide-counter">{Math.min(slideIndex + 1, Math.max(slides.length, 1))} <span>/</span> {Math.max(slides.length, 1)}</div>
           <h2>{slides[slideIndex] || 'Escreva uma nota com --- entre os cartões.'}</h2>
         </div>
-        <div class="re-presentation-bottom"><button disabled={slideIndex === 0} onclick={() => slideIndex--}><ChevronLeft size={18}/> Anterior</button><span>← → para navegar · Esc para fechar</span>
-          <button disabled={slideIndex >= slides.length - 1} onclick={() => slideIndex++}>Próximo <ChevronRight size={18}/></button></div>
+        <div class="re-presentation-bottom"><button disabled={slideIndex === 0} onclick={() => moveSlide(-1)}><ChevronLeft size={18}/> Anterior</button><span>Retoma do último cartão · ← → navegar · Esc fechar</span>
+          <button onclick={() => moveSlide(-slideIndex)} disabled={slideIndex === 0}>Recomeçar</button>
+          <button disabled={slideIndex >= slides.length - 1} onclick={() => moveSlide(1)}>Próximo <ChevronRight size={18}/></button></div>
       </div>
     {/if}
   </div>

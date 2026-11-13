@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from './types';
+import type { Note, Task, TaskResume, InboxItem, Reminder, ReminderEvent, ReminderRule } from './types';
 
 export const notesApi = {
   list: () => invoke<Note[]>('list_notes'),
@@ -34,6 +34,9 @@ export const tasksApi = {
     invoke<Task>('set_task_plan', { id, bucket, plannedFor }),
   update: (id: string, title: string, details: string, dueAt: number | null, expectedRevision: number) =>
     invoke<Task>('update_task', { id, title, details, dueAt, expectedRevision }),
+  getResume: (taskId: string) => invoke<TaskResume | null>('get_task_resume', { taskId }),
+  saveResume: (taskId: string, lastContext: string, nextStep: string, expectedRevision: number) =>
+    invoke<TaskResume>('save_task_resume', { taskId, lastContext, nextStep, expectedRevision }),
   complete: (id: string, completed: boolean) => invoke<Task>('set_task_completed', { id, completed }),
   delete: (id: string) => invoke<void>('delete_task', { id })
 };

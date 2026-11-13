@@ -18,6 +18,15 @@ pub struct Task {
     pub revision: i64,
 }
 
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct TaskResume {
+    pub task_id: String,
+    pub last_context: String,
+    pub next_step: String,
+    pub updated_at: i64,
+    pub revision: i64,
+}
+
 const FIELDS: &str = "t.id,t.title,t.details,t.due_at,t.completed_at,t.created_at,t.updated_at,t.deleted_at,COALESCE(p.bucket,'today') AS bucket,p.planned_for,COALESCE(v.revision,0) AS revision";
 
 pub async fn initialize(pool: &SqlitePool) -> Result<(), sqlx::Error> {
@@ -51,6 +60,14 @@ pub async fn initialize(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         BEGIN INSERT OR IGNORE INTO task_revisions(task_id,revision) VALUES(NEW.id,0); END").execute(pool).await?;
     sqlx::query("CREATE TRIGGER IF NOT EXISTS task_revision_edit AFTER UPDATE OF title,details,due_at,completed_at,deleted_at ON tasks
         BEGIN UPDATE task_revisions SET revision=revision+1 WHERE task_id=NEW.id; END").execute(pool).await?;
+    // A small, additive checkpoint per task, independent of task text and planning.
+    sqlx::query("CREATE TABLE IF NOT EXISTS task_resumes(
+        task_id TEXT PRIMARY KEY NOT NULL REFERENCES tasks(id),
+        last_context TEXT NOT NULL DEFAULT '',
+        next_step TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0)
+    )").execute(pool).await?;
     Ok(())
 }
 
@@ -124,6 +141,31 @@ pub async fn set_completed(pool: &SqlitePool, id: &str, completed: bool) -> Resu
     if completed { reminders::cancel_in_tx(&mut tx, "task", id).await?; }
     tx.commit().await?;
     get(pool, id).await?.ok_or(sqlx::Error::RowNotFound)
+}
+
+pub async fn get_resume(pool: &SqlitePool, task_id: &str) -> Result<Option<TaskResume>, sqlx::Error> {
+    sqlx::query_as::<_, TaskResume>("SELECT r.task_id,r.last_context,r.next_step,r.updated_at,r.revision
+        FROM task_resumes r INNER JOIN tasks t ON t.id=r.task_id
+        WHERE r.task_id=? AND t.deleted_at IS NULL")
+        .bind(task_id).fetch_optional(pool).await
+}
+
+/// A first save inserts revision 1; later saves must supply the current revision.
+/// No overwrite is possible from two windows starting with the same revision.
+pub async fn save_resume(
+    pool: &SqlitePool, task_id: &str, last_context: &str, next_step: &str,
+    expected_revision: i64,
+) -> Result<Option<TaskResume>, sqlx::Error> {
+    let result = sqlx::query("INSERT INTO task_resumes(task_id,last_context,next_step,updated_at,revision)
+        SELECT id,?,?,?,1 FROM tasks WHERE id=? AND deleted_at IS NULL
+        ON CONFLICT(task_id) DO UPDATE SET
+          last_context=excluded.last_context, next_step=excluded.next_step,
+          updated_at=excluded.updated_at, revision=task_resumes.revision+1
+        WHERE task_resumes.revision=?")
+        .bind(last_context).bind(next_step).bind(now_ms()).bind(task_id).bind(expected_revision)
+        .execute(pool).await?;
+    if result.rows_affected()==0 { return Ok(None); }
+    get_resume(pool, task_id).await
 }
 
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
@@ -200,6 +242,46 @@ mod planning_tests {
             .any(|x| x.file_name.contains("pre-content-revisions")));
         reopened.close().await;
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn resume_checkpoint_persists_and_rejects_stale_writes() {
+        let dir=test_dir(); let path=dir.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let task=super::create(&pool,"Explicar projeto").await.unwrap();
+        assert!(super::get_resume(&pool,&task.id).await.unwrap().is_none());
+        let (first,second)=tokio::join!(
+            super::save_resume(&pool,&task.id,"Falei sobre a arquitetura","Mostrar demo",0),
+            super::save_resume(&pool,&task.id,"Outra versão","Voltar ao começo",0)
+        );
+        assert_ne!(first.unwrap().is_some(),second.unwrap().is_some());
+        let row=super::get_resume(&pool,&task.id).await.unwrap().unwrap();
+        assert_eq!(row.revision,1);
+        let next=super::save_resume(&pool,&task.id,"Explicação finalizada","Responder perguntas",1)
+            .await.unwrap().unwrap();
+        assert_eq!(next.revision,2);
+        assert!(super::save_resume(&pool,&task.id,"Obsoleto","Não pode",1).await.unwrap().is_none());
+        pool.close().await;
+        let reopened=crate::db::connect(&path).await.unwrap();
+        let persisted=super::get_resume(&reopened,&task.id).await.unwrap().unwrap();
+        assert_eq!(persisted.next_step,"Responder perguntas");
+        reopened.close().await; let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn resume_migration_preserves_existing_tasks_and_creates_backup() {
+        let dir=test_dir(); let path=dir.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let task=super::create(&pool,"Tarefa pré-existente").await.unwrap();
+        sqlx::query("DROP TABLE task_resumes").execute(&pool).await.unwrap();
+        pool.close().await;
+        let reopened=crate::db::connect(&path).await.unwrap();
+        assert_eq!(super::get(&reopened,&task.id).await.unwrap().unwrap().title,"Tarefa pré-existente");
+        let backups=crate::db::list_backups(&path).unwrap();
+        assert!(backups.iter().any(|x| x.file_name.contains("pre-resume")));
+        let rev: i64=sqlx::query_scalar("PRAGMA user_version").fetch_one(&reopened).await.unwrap();
+        assert_eq!(rev,4);
+        reopened.close().await; let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

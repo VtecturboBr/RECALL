@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildWorkspace, nextTask, searchWorkspace, toSlides } from '../src/lib/workspace.ts';
+import { buildWorkspace, nextTask, searchWorkspace, toSlides, resumeSlideIndex } from '../src/lib/workspace.ts';
 
 const note = (id, title, body = '', updated = 10) => ({
   id, title, body, kind: 'note', pinned: false, remind_at: null,
@@ -59,4 +59,13 @@ test('pinned notes remain at the top after more recent items are edited', () => 
   assert.deepEqual(result.map(e => e.key), ['note:pin', 'task:t', 'note:latest']);
   assert.deepEqual(searchWorkspace(result, 'feita').map(e => e.key), ['task:t']);
   assert.deepEqual(buildWorkspace([{...pinned,pinned:false}],[],[]).map(e=>e.key), ['note:pin']);
+});
+
+test('resume a presentation safely when slide counts change', () => {
+  assert.equal(resumeSlideIndex('2', 5), 2);
+  assert.equal(resumeSlideIndex('30', 3), 2);
+  assert.equal(resumeSlideIndex('-1', 3), 0);
+  assert.equal(resumeSlideIndex('invalid', 3), 0);
+  assert.equal(resumeSlideIndex('1', 0), 0);
+  assert.equal(resumeSlideIndex(null, 8), 0);
 });
