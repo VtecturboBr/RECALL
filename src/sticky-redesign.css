@@ -1,0 +1,19 @@
+/* Floating note — quiet, compact, offline */
+.re-sticky{display:flex;flex-direction:column;height:100%;width:100%;min-height:0;color:#eee8ed;background:#19161c;border:1px solid #49343f;border-radius:10px;overflow:hidden;position:relative}
+.re-sticky-head{height:41px;flex:0 0 41px;padding:0 11px;display:flex;justify-content:space-between;align-items:center;background:#2b1c25;border-bottom:1px solid #58404b}
+.re-sticky-head>div{display:flex;align-items:center;gap:8px;color:#f1d1dc;letter-spacing:.6px;font-size:10px;font-weight:760}
+.re-sticky-head small{color:#be9dab;font-size:9px;font-weight:620}
+.re-sticky-dot{width:7px;height:7px;border-radius:50%;background:#e90530;box-shadow:0 0 0 3px #e905301c}
+.re-sticky-edit{display:flex;flex:1;flex-direction:column;min-height:0;padding:14px 17px 5px}
+.re-sticky-edit input{background:none;border:0;border-bottom:1px solid #44313d;color:#f4e9ef;outline:none;font-size:16px;font-weight:700;letter-spacing:-.35px;width:100%;padding:0 0 12px}
+.re-sticky-edit input::placeholder{color:#847582}
+.re-sticky-edit textarea{display:block;flex:1;min-height:0;width:100%;resize:none;border:0;outline:none;background:none;color:#d6cbd4;font-size:12.5px;line-height:1.65;padding:12px 0 8px}
+.re-sticky-edit textarea::placeholder{color:#827885}
+.re-sticky-foot{height:30px;flex:0 0 30px;border-top:1px solid #43333d;background:#1b171d;display:flex;align-items:center;justify-content:space-between;gap:9px;padding:0 12px}
+.re-sticky-foot>span{display:flex;gap:5px;align-items:center;white-space:nowrap;color:#ad9ca9;font-size:9px}
+.re-sticky-foot svg{color:#d47e95}
+.re-sticky-state-dot{height:6px;width:6px;border-radius:50%;background:#90caa6}
+.re-sticky-state-dot.pending{background:#e7a375}
+.re-sticky-loading{display:grid;place-items:center;flex:1;font-size:12px;color:#b4aab7}
+.re-sticky-error{position:absolute;bottom:30px;left:10px;right:10px;border:1px solid #b45472;background:#3c2330;color:#ffdbeb;border-radius:9px;padding:12px;font-size:11px;line-height:1.5;box-shadow:0 9px 28px #0009;overflow-wrap:anywhere}
+.re-sticky-error button{display:flex;align-items:center;gap:7px;margin-top:10px;background:#673447;border:1px solid #a4627c;border-radius:7px;color:#fff;padding:8px;font-size:11px}

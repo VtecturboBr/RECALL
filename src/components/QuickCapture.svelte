@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { NotebookPen, Check, X } from 'lucide-svelte';
+  import { NotebookPen, Check, X, Sparkles, CheckCircle2, CalendarDays, Command } from 'lucide-svelte';
   import { inboxApi, tasksApi } from '../lib/api';
   import { parseTaskCapture } from '../lib/smartCapture';
 
@@ -69,27 +69,35 @@
   }
 </script>
 
-<svelte:window onkeydown={keyboard} />
-<svelte:head><title>Capturar ideia · RECALL</title></svelte:head>
-
-<section class="capture-shell" aria-label="Captura rápida">
-  <header class="capture-head" data-tauri-drag-region>
-    <div class="capture-label"><span class="capture-symbol"><NotebookPen size={18}/></span><span>CAPTURA RÁPIDA</span></div>
-    <button class="capture-close" title="Fechar (Esc)" aria-label="Fechar captura" onclick={closeCapture}><X size={18}/></button>
-  </header>
-  <div class="capture-main">
-    <h1>Não perca o pensamento.</h1>
-    <p>Registre sem interromper o que estava fazendo.</p>
-    <div class="capture-kind" role="group" aria-label="Tipo do registro">
-      <button class:active={kind === 'idea'} aria-pressed={kind === 'idea'} onclick={() => chooseKind('idea')}>Ideia</button>
-      <button class:active={kind === 'task'} aria-pressed={kind === 'task'} onclick={() => chooseKind('task')}>Tarefa</button>
+<svelte:head><title>Captura rápida — RECALL</title></svelte:head>
+<section class="re-cap" aria-label="Captura rápida">
+  <header class="re-cap-header" data-tauri-drag-region>
+    <div class="re-cap-brand" data-tauri-drag-region>
+      <span class="re-cap-mark" data-tauri-drag-region><NotebookPen size={17}/></span>
+      <span data-tauri-drag-region>RECALL <small data-tauri-drag-region>/ CAPTURA RÁPIDA</small></span>
     </div>
-    <textarea bind:this={textarea} bind:value={content} oninput={rememberDraft} aria-label="Escreva sua ideia" placeholder="O que você quer lembrar?" maxlength="100000" spellcheck="true"></textarea>
-    {#if kind === 'task' && suggestion.recognized}<p class="capture-suggestion">{suggestion.label} · sem notificação automática</p>{/if}
-    {#if failure}<div class="capture-error" role="alert">{failure}</div>{/if}
+    <button aria-label="Fechar janela de captura" title="Fechar (Esc)" onclick={closeCapture}><X size={18}/></button>
+  </header>
+  <div class="re-cap-body">
+    <h1>Guarde o pensamento<span>.</span></h1>
+    <p>Capture agora. Organize quando quiser.</p>
+    <div class="re-cap-tabs" role="group" aria-label="Tipo de registro">
+      <button class:chosen={kind === 'idea'} aria-pressed={kind === 'idea'} onclick={() => chooseKind('idea')}><Sparkles size={15}/> Ideia</button>
+      <button class:chosen={kind === 'task'} aria-pressed={kind === 'task'} onclick={() => chooseKind('task')}><CheckCircle2 size={15}/> Tarefa</button>
+    </div>
+    <label class="re-cap-input-wrap">
+      <span class="re-visually-hidden">Texto a capturar</span>
+      <textarea bind:this={textarea} bind:value={content} oninput={rememberDraft} maxlength="100000" spellcheck="true" placeholder={kind === 'task' ? 'Qual é a próxima ação?' : 'O que você quer lembrar?'}></textarea>
+      {#if kind === 'task' && suggestion.recognized}
+        <span class="re-cap-hint"><CalendarDays size={13}/>{suggestion.label} · sem notificação automática</span>
+      {/if}
+    </label>
+    {#if failure}<div class="re-cap-error" role="alert">{failure}</div>{/if}
   </div>
-  <footer class="capture-footer">
-    <span><kbd>Ctrl</kbd> + <kbd>Enter</kbd> para salvar</span>
-    <button class="capture-save" disabled={!content.trim() || busy} onclick={save}>{#if busy}<span>Salvando...</span>{:else}<Check size={17}/> {kind === 'task' ? 'Criar tarefa' : 'Guardar ideia'}{/if}</button>
+  <footer class="re-cap-footer">
+    <span><Command size={13}/> <kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+    <button class="re-cap-save" disabled={busy || !content.trim()} onclick={save}>
+      {#if busy}Salvando...{:else}<Check size={16}/>{kind === 'task' ? 'Criar tarefa' : 'Guardar ideia'}{/if}
+    </button>
   </footer>
 </section>
