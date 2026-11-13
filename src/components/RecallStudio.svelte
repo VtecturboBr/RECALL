@@ -7,7 +7,7 @@
     ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw, Target, ShieldCheck, AlarmClock, Repeat2, CheckCheck,
     Command, ArrowUpRight, CalendarDays, MoreHorizontal, Pin, Sparkles, LayoutGrid, Clock3, Inbox, Keyboard, PanelLeftClose, PanelLeftOpen, Coffee, CheckCircle2, Sun, NotebookPen
   } from 'lucide-svelte';
-  import { notesApi, tasksApi, inboxApi, backupsApi, remindersApi, formatDateTime, toLocalInput } from '../lib/api';
+  import { notesApi, tasksApi, focusApi, inboxApi, backupsApi, remindersApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
   import TaskResume from './TaskResume.svelte';
   import FocusSession from './FocusSession.svelte';
@@ -16,7 +16,7 @@
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../lib/editorSafety';
-  import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
+  import type { Note, Task, FocusSession as StoredFocusSession, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
 
   type View = 'now' | 'archive';
   let view = $state<View>('now');
@@ -39,6 +39,17 @@
   let busy = $state(false);
   let sidebarVisible = $state(true);
   let focusedTaskId = $state<string | null>(null);
+  let activeFocus = $state<StoredFocusSession | null>(null);
+  let activeFocusRequest = 0;
+  async function loadActiveFocus() {
+    const request = ++activeFocusRequest;
+    try {
+      const session = await focusApi.active();
+      if (request === activeFocusRequest) activeFocus = session;
+    } catch (e) {
+      error = 'Não foi possível consultar a sessão em foco: ' + String(e);
+    }
+  }
   let captureKind = $state<'idea' | 'task'>('idea');
   let clock = $state(new Date());
   let archiveFilter = $state<'all' | 'note' | 'task' | 'idea'>('all');
@@ -238,6 +249,9 @@
     const dayClock = setInterval(() => { clock = new Date(); }, 60_000);
     const unlisteners: Array<() => void> = [];
     void refresh();
+    void loadActiveFocus();
+    void listen('focus:changed', () => { if (alive) void loadActiveFocus(); })
+      .then(dispose => { if (alive) unlisteners.push(dispose); else dispose(); });
     for (const eventName of ['notes:changed', 'tasks:changed', 'inbox:changed', 'reminders:changed']) {
       void listen(eventName, () => { if (alive) void refresh(); })
         .then(dispose => { if (alive) unlisteners.push(dispose); else dispose(); });
@@ -262,6 +276,7 @@
     window.addEventListener('keydown', onKey);
     return () => {
       alive = false;
+      activeFocusRequest++;
       clearInterval(dayClock);
       narrowViewport.removeEventListener('change', onNarrowChange);
       unlisteners.forEach(fn => fn());
@@ -1028,6 +1043,19 @@
               </div>
             {/if}
           </section>
+
+          {#if activeFocus && activeFocus.task_id !== currentTask?.id}
+            <section class="re-focus re-focus-other" aria-label="Sessão ativa de outra tarefa">
+              <div class="re-focus-content">
+                <p class="re-focus-label">SESSÃO AINDA EM ANDAMENTO</p>
+                <h3>{tasks.find(task => task.id === activeFocus?.task_id)?.title ?? 'Tarefa em foco'}</h3>
+                <p class="re-focus-details">Você pode pausar ou finalizar esta sessão mesmo que a tarefa tenha sido movida para Depois ou Algum dia.</p>
+                {#key activeFocus.task_id}
+                  <FocusSession taskId={activeFocus.task_id}/>
+                {/key}
+              </div>
+            </section>
+          {/if}
 
           <div class="re-now-columns">
             <section class="re-section re-next" aria-label="Próximas tarefas">
