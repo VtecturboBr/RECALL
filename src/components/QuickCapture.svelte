@@ -5,6 +5,8 @@
   import { NotebookPen, Check, X, Sparkles, CheckCircle2, CalendarDays, Command } from 'lucide-svelte';
   import { inboxApi, tasksApi } from '../lib/api';
   import { parseTaskCapture } from '../lib/smartCapture';
+  import { taskTitleForSave } from '../lib/editorSafety';
+  import { shouldClearCaptureAfterSave } from '../lib/captureSafety';
 
   let content = $state('');
   let kind = $state<'idea' | 'task'>('idea');
@@ -43,19 +45,28 @@
   }
 
   async function save() {
-    if (busy || !content.trim()) return;
+    if (busy || (kind === 'idea' && !content.trim())) return;
     busy = true; failure = '';
+    const submitted = content;
+    const submittedKind = kind;
     try {
-      if (kind === 'task') {
-        const draft = parseTaskCapture(content, new Date());
-        if (!draft.title.trim() || draft.title.length > 250) throw new Error('Use um título de até 250 caracteres.');
-        await tasksApi.createPlanned(draft.title, draft.details, draft.bucket, draft.plannedFor, draft.dueAt);
+      if (submittedKind === 'task') {
+        const draft = parseTaskCapture(submitted, new Date());
+        const title = taskTitleForSave(draft.title);
+        if (title.length > 250) throw new Error('Use um título de até 250 caracteres.');
+        await tasksApi.createPlanned(title, draft.details, draft.bucket, draft.plannedFor, draft.dueAt);
       } else {
-        await inboxApi.capture(content);
+        await inboxApi.capture(submitted);
       }
-      content = '';
-      try { localStorage.removeItem(DRAFT_KEY); } catch { /* Storage unavailable. */ }
-      await windowHandle.hide();
+      if (shouldClearCaptureAfterSave(content, kind, submitted, submittedKind)) {
+        content = '';
+        try { localStorage.removeItem(DRAFT_KEY); } catch { /* Storage unavailable. */ }
+        await windowHandle.hide();
+      } else {
+        // New typing was made while SQLite was saving the old text.
+        // Leave the capture window open and keep its latest local draft.
+        rememberDraft();
+      }
     } catch (error) {
       failure = `Não foi possível salvar. ${String(error)}`;
     } finally {
@@ -96,7 +107,7 @@
   </div>
   <footer class="re-cap-footer">
     <span><Command size={13}/> <kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
-    <button class="re-cap-save" disabled={busy || !content.trim()} onclick={save}>
+    <button class="re-cap-save" disabled={busy || (kind === 'idea' && !content.trim())} onclick={save}>
       {#if busy}Salvando...{:else}<Check size={16}/>{kind === 'task' ? 'Criar tarefa' : 'Guardar ideia'}{/if}
     </button>
   </footer>
