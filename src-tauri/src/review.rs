@@ -23,7 +23,7 @@ pub struct ReviewItem {
 struct ReviewTask {
     id: String,
     title: String,
-    details: String,
+    details_empty: i64,
     due_at: Option<i64>,
     created_at: i64,
     updated_at: i64,
@@ -39,8 +39,18 @@ struct ReviewTask {
 pub async fn list(pool: &SqlitePool) -> Result<Vec<ReviewItem>, sqlx::Error> {
     list_at(pool, now_ms()).await
 }
+pub async fn list_excluding(pool: &SqlitePool, hidden_keys: &[String]) -> Result<Vec<ReviewItem>, sqlx::Error> {
+    let hidden: HashSet<String> = hidden_keys.iter().cloned().collect();
+    list_at_excluding(pool, now_ms(), &hidden).await
+}
 
 async fn list_at(pool: &SqlitePool, now: i64) -> Result<Vec<ReviewItem>, sqlx::Error> {
+    list_at_excluding(pool, now, &HashSet::new()).await
+}
+
+async fn list_at_excluding(
+    pool: &SqlitePool, now: i64, hidden: &HashSet<String>,
+) -> Result<Vec<ReviewItem>, sqlx::Error> {
     let mut ranked: Vec<(u8, ReviewItem)> = Vec::new();
     let mut seen: HashSet<(String, String)> = HashSet::new();
 
@@ -66,7 +76,8 @@ async fn list_at(pool: &SqlitePool, now: i64) -> Result<Vec<ReviewItem>, sqlx::E
     // One query for all open tasks, and a subquery for each task's *latest*
     // focus session. An earlier pause cannot override a newer finished session.
     let rows: Vec<ReviewTask> = sqlx::query_as(
-        "SELECT t.id,t.title,t.details,t.due_at,t.created_at,t.updated_at,
+        "SELECT t.id,t.title,CAST(TRIM(t.details)='' AS INTEGER) AS details_empty,
+                t.due_at,t.created_at,t.updated_at,
                 COALESCE(p.bucket,'today') AS bucket,p.planned_for,
                 COALESCE(s.next_step,'') AS next_step,
                 f.state AS focus_state,
@@ -90,7 +101,7 @@ async fn list_at(pool: &SqlitePool, now: i64) -> Result<Vec<ReviewItem>, sqlx::E
         let overdue = task.due_at.filter(|at| *at < now);
         let activity_at = task.updated_at.max(task.focus_at.unwrap_or(0));
         let age_ms = now.saturating_sub(activity_at);
-        let missing_step = task.details.trim().is_empty() && task.next_step.trim().is_empty();
+        let missing_step = task.details_empty != 0 && task.next_step.trim().is_empty();
         let choice: Option<(u8, &str, &str, i64)> = if let Some(due_at) = overdue {
             Some((1, "overdue_task", "O prazo registrado passou. Confira a tarefa.", due_at))
         } else if !postponed && matches!(task.focus_state.as_deref(),Some("paused" | "interrupted")) {
@@ -116,7 +127,12 @@ async fn list_at(pool: &SqlitePool, now: i64) -> Result<Vec<ReviewItem>, sqlx::E
         .then(a.occurred_at.cmp(&b.occurred_at))
         .then(a.target_type.cmp(&b.target_type))
         .then(a.target_id.cmp(&b.target_id)));
-    Ok(ranked.into_iter().take(REVIEW_LIMIT).map(|(_,entry)|entry).collect())
+    // Exclude already-reviewed suggestions BEFORE the 12-item page limit.
+    // This exposes later candidates when the user hides the first page.
+    Ok(ranked.into_iter().filter_map(|(_,entry)| {
+        let key=format!("{}:{}:{}",entry.target_type,entry.target_id,entry.kind);
+        if hidden.contains(&key) {None} else {Some(entry)}
+    }).take(REVIEW_LIMIT).collect())
 }
 
 #[cfg(test)]
