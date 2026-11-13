@@ -27,6 +27,17 @@ export interface Task {
   revision: number;
 }
 
+export interface FocusSession {
+  id: string;
+  task_id: string;
+  started_at: number;
+  last_tick_at: number;
+  active_ms: number;
+  ended_at: number | null;
+  state: 'active' | 'paused' | 'finished' | 'interrupted';
+  summary: string;
+}
+
 export interface TaskResume {
   task_id: string;
   last_context: string;
