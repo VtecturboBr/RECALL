@@ -64,6 +64,7 @@
   let noteDirty = $state(false);
   let noteRevision = $state(0);
   let noteConflict = $state(false);
+  let noteRemoteChanged = $state(false);
   let backupBusy = $state(false);
   let backupMessage = $state('');
   function draftKey(id: string) { return 'recall-note-draft:' + id; }
@@ -120,7 +121,8 @@
   let selected = $derived(entries.find(item => item.key === selectedKey) ?? null);
   let matches = $derived(searchWorkspace(entries, search, archiveFilter));
   let visibleEntries = $derived(matches.filter(item =>
-    archivePeriod === 'all' || (item.type === 'task' && taskPeriod(item.task, clock) === archivePeriod)
+    archivePeriod === 'all' || (item.type === 'task'
+      && item.task.completed_at === null && taskPeriod(item.task, clock) === archivePeriod)
   ));
   let todayTasks = $derived(tasksByPeriod(tasks, 'today', clock));
   let laterTasks = $derived(tasksByPeriod(tasks, 'later', clock));
@@ -144,11 +146,40 @@
   });
   let slides = $derived(toSlides(noteBody));
 
+  let refreshGeneration = 0;
   async function refresh(): Promise<void> {
+    const generation = ++refreshGeneration;
     try {
       const [n, t, i, r, h] = await Promise.all([
         notesApi.list(), tasksApi.list(), inboxApi.list(), remindersApi.list(), remindersApi.history()
       ]);
+      // Do not let an older IPC response undo a newer user action.
+      if (generation !== refreshGeneration) return;
+      const activeNote = draftNoteId ? n.find(row => row.id === draftNoteId) : null;
+      if (activeNote) {
+        if (!noteDirty && !noteSaving) {
+          noteTitle = activeNote.title;
+          noteBody = activeNote.body;
+          noteRevision = activeNote.revision;
+          noteRemoteChanged = false;
+        } else if (!noteSaving && activeNote.revision !== noteRevision) noteRemoteChanged = true;
+      }
+      const activeTask = draftTaskId ? t.find(row => row.id === draftTaskId) : null;
+      if (activeTask) {
+        if (!taskDirty && !taskSaving) {
+          taskTitle = activeTask.title;
+          taskDetails = activeTask.details;
+          taskDue = toLocalInput(activeTask.due_at);
+          taskRevision = activeTask.revision;
+        } else if (!taskSaving && activeTask.revision !== taskRevision) taskConflict = true;
+      }
+      const activeIdea = draftIdeaId ? i.find(row => row.id === draftIdeaId) : null;
+      if (activeIdea) {
+        if (!ideaDirty && !ideaSaving) {
+          ideaText = activeIdea.text;
+          ideaRevision = activeIdea.revision;
+        } else if (!ideaSaving && activeIdea.revision !== ideaRevision) ideaConflict = true;
+      }
       notes = n;
       tasks = t;
       ideas = i;
@@ -156,9 +187,9 @@
       reminderHistory = h;
       error = '';
     } catch (e) {
-      error = 'Não foi possível carregar seus dados: ' + String(e);
+      if (generation === refreshGeneration) error = 'Não foi possível carregar seus dados: ' + String(e);
     } finally {
-      loading = false;
+      if (generation === refreshGeneration) loading = false;
     }
   }
 
@@ -269,6 +300,7 @@
         if (draftNoteId === id) {
           noteRevision = saved.revision;
           noteConflict = false;
+          noteRemoteChanged = false;
           if (!noteDirty) discardLocalDraft(id);
         }
         return true;
@@ -310,6 +342,7 @@
       noteBody = entry.note.body;
       noteRevision = entry.note.revision;
       noteConflict = false;
+      noteRemoteChanged = false;
       noteDirty = false;
       try {
         const cached = localStorage.getItem(draftKey(entry.note.id));
@@ -329,6 +362,7 @@
       draftNoteId = null;
       noteDirty = false;
       noteConflict = false;
+      noteRemoteChanged = false;
     }
     draftIdeaId = entry?.type === 'idea' ? entry.idea.id : null;
     draftTaskId = entry?.type === 'task' ? entry.task.id : null;
@@ -581,6 +615,7 @@
       discardLocalDraft(originalId);
       noteDirty = false;
       noteConflict = false;
+      noteRemoteChanged = false;
       draftNoteId = saved.id;
       noteRevision = saved.revision;
       notes = [saved, ...notes.filter(n => n.id !== saved.id)];
@@ -614,6 +649,7 @@
         discardLocalDraftByKey(taskDraftKey(entry.task.id));
         taskDirty = false; taskConflict = false;
         await refresh();
+        search = ''; archiveFilter = 'all'; archivePeriod = 'all';
         await openEntry('task:' + created.id);
       }
       error = 'Cópia salva separadamente. O item original foi mantido.';
@@ -713,10 +749,12 @@
       if (target === 'note') {
         const created = await inboxApi.toNote(item.id);
         await refresh();
+        search = ''; archiveFilter = 'all'; archivePeriod = 'all';
         await openEntry('note:' + created.id);
       } else {
         const created = await inboxApi.toTask(item.id);
         await refresh();
+        search = ''; archiveFilter = 'all'; archivePeriod = 'all';
         await openEntry('task:' + created.id);
       }
     } catch (e) { error = 'Falha ao organizar a ideia: ' + String(e); }
@@ -748,6 +786,7 @@
       await refresh();
       archiveFilter = 'all';
       archivePeriod = 'all';
+      search = '';
       view = 'archive';
       await openEntry('note:' + created.id);
     } catch (e) { error = 'Não foi possível criar sua nota: ' + String(e); }
@@ -836,9 +875,9 @@
         <ShieldCheck size={17}/><span>{backupMessage}</span><button aria-label="Fechar confirmação" onclick={() => backupMessage = ''}><X size={16}/></button>
       </div>
     {/if}
-    {#if noteConflict && selected?.type === 'note'}
+    {#if (noteConflict || noteRemoteChanged) && selected?.type === 'note'}
       <div class="re-banner re-banner-conflict" role="alert">
-        <span>Conflito de edição: outra janela modificou esta nota. Seu texto permanece aqui.</span>
+        <span>Esta nota foi modificada em outra janela. Seu texto local não foi substituído.</span>
         <button class="re-small-action" onclick={() => { void saveConflictCopy(); }}>Salvar como outra nota</button>
       </div>
     {/if}
@@ -1013,7 +1052,7 @@
                 <button class="re-entry" class:selected={selectedKey === item.key} onclick={() => { void openEntry(item.key); }}>
                   <span class="re-entry-icon">{#if item.type === 'task'}<CheckCircle2 size={17}/>{:else if item.type === 'idea'}<Sparkles size={17}/>{:else if item.note.kind === 'presentation'}<Presentation size={17}/>{:else}<FileText size={17}/>{/if}</span>
                   <span class="re-entry-copy">
-                    <strong>{item.title}</strong>
+                    <strong>{#if item.type === 'note' && item.note.pinned}<Pin size={13} aria-label="Nota fixada"/>{/if}{item.title}</strong>
                     <small>{item.text?.slice(0,120) || (item.type === 'task' ? 'Tarefa sem detalhes' : 'Sem conteúdo')}</small>
                     <span class="re-entry-sub">
                       {item.type === 'idea' ? 'Ideia' : item.type === 'task' ? (item.task.completed_at ? 'Concluída' : taskPeriod(item.task, clock) === 'today' ? 'Hoje' : taskPeriod(item.task, clock) === 'later' ? 'Depois' : 'Algum dia') : item.note.kind === 'presentation' ? 'Apresentação' : 'Nota'}
