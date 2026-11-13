@@ -3,7 +3,7 @@
 use crate::db::now_ms;
 use chrono::{Datelike, Duration, Local, Months, NaiveDateTime, TimeZone, Timelike};
 use serde::Serialize;
-use sqlx::{FromRow, SqlitePool};
+use sqlx::{FromRow, SqlitePool, Sqlite, Transaction};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -48,7 +48,7 @@ const SELECT: &str = "SELECT r.id,r.target_type,r.target_id,
     LEFT JOIN tasks t ON r.target_type='task' AND t.id=r.target_id";
 
 const ALIVE: &str = "((r.target_type='note' AND n.id IS NOT NULL AND n.deleted_at IS NULL)
-    OR (r.target_type='task' AND t.id IS NOT NULL AND t.deleted_at IS NULL))";
+    OR (r.target_type='task' AND t.id IS NOT NULL AND t.deleted_at IS NULL AND t.completed_at IS NULL))";
 
 pub fn valid_rule(rule: &str) -> bool {
     matches!(rule, "none" | "daily" | "weekly" | "monthly")
@@ -169,31 +169,35 @@ pub async fn schedule(
     find(pool, kind, target_id).await?.ok_or(sqlx::Error::RowNotFound)
 }
 
-pub async fn cancel(
-    pool: &SqlitePool, kind: &str, target_id: &str,
+// Shared transaction lets completion + cancellation succeed or fail together.
+pub async fn cancel_in_tx(
+    tx: &mut Transaction<'_, Sqlite>, kind: &str, target_id: &str,
 ) -> Result<(), sqlx::Error> {
-    let mut tx = pool.begin().await?;
     let existing = sqlx::query_as::<_, (String, i64)>(
         "SELECT id,anchor_at FROM reminder_rules WHERE target_type=? AND target_id=?"
-    ).bind(kind).bind(target_id).fetch_optional(&mut *tx).await?;
+    ).bind(kind).bind(target_id).fetch_optional(&mut **tx).await?;
     if let Some((id, anchor)) = existing {
-        sqlx::query("UPDATE reminder_rules SET state='cancelled',updated_at=?,last_error=NULL
-            WHERE id=?")
-            .bind(now_ms()).bind(&id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE reminder_rules SET state='cancelled',updated_at=?,last_error=NULL WHERE id=?")
+            .bind(now_ms()).bind(&id).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO reminder_events(reminder_id,target_type,target_id,kind,occurred_at,scheduled_for)
              VALUES(?,?,?,'cancelled',?,?)")
             .bind(id).bind(kind).bind(target_id).bind(now_ms()).bind(anchor)
-            .execute(&mut *tx).await?;
+            .execute(&mut **tx).await?;
     }
     if kind == "note" {
         sqlx::query("UPDATE notes SET remind_at=NULL,notified_at=NULL WHERE id=? AND deleted_at IS NULL")
-            .bind(target_id).execute(&mut *tx).await?;
+            .bind(target_id).execute(&mut **tx).await?;
     }
+    Ok(())
+}
+
+pub async fn cancel(pool: &SqlitePool, kind: &str, target_id: &str) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    cancel_in_tx(&mut tx, kind, target_id).await?;
     tx.commit().await
 }
 
 pub async fn complete_task(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
-    // Task completion hides any pending reminder, without deleting its history.
     cancel(pool, "task", id).await
 }
 
