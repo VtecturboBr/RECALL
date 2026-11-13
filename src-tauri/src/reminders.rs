@@ -201,6 +201,36 @@ pub async fn complete_task(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Erro
     cancel(pool, "task", id).await
 }
 
+/// Count the entire pending backlog before claiming the next bounded batch.
+pub async fn count_due(pool: &SqlitePool, at: i64) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT COUNT(*) FROM reminder_rules r
+        LEFT JOIN notes n ON r.target_type='note' AND n.id=r.target_id
+        LEFT JOIN tasks t ON r.target_type='task' AND t.id=r.target_id
+        WHERE r.state IN ('scheduled','snoozed') AND r.due_at<=?
+          AND ((r.target_type='note' AND n.deleted_at IS NULL AND n.id IS NOT NULL)
+          OR (r.target_type='task' AND t.deleted_at IS NULL AND t.completed_at IS NULL AND t.id IS NOT NULL))")
+        .bind(at).fetch_one(pool).await
+}
+
+/// Mark a batch as intentionally included in a previous summary, not as a native dispatch.
+pub async fn record_suppressed(pool: &SqlitePool, ids: &[String], at: i64) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    for id in ids {
+        let row = sqlx::query_as::<_, (String,String,i64,String)>(
+            "SELECT target_type,target_id,anchor_at,state FROM reminder_rules WHERE id=?"
+        ).bind(id).fetch_optional(&mut *tx).await?;
+        if let Some((target_type, target_id, anchor, state)) = row {
+            if state != "attention" { continue; }
+            sqlx::query("INSERT INTO reminder_events(
+                reminder_id,target_type,target_id,kind,occurred_at,scheduled_for
+            ) VALUES(?,?,?,'suppressed',?,?)")
+                .bind(id).bind(target_type).bind(target_id).bind(at).bind(anchor)
+                .execute(&mut *tx).await?;
+        }
+    }
+    tx.commit().await
+}
+
 /// Atomically claim a bounded set of overdue occurrences. Once claimed, each
 /// remains visible in the attention inbox even if toast dispatch fails or the
 /// process exits. No automatic re-toast on app restart.
@@ -477,6 +507,26 @@ mod tests {
         assert_eq!((second_due.month(),second_due.day()),(3,31));
         assert_eq!(second.series_at,jan);
         pool.close().await;let _=fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn suppressed_bulk_is_auditable_and_remains_in_attention() {
+        let dir=folder(); let path=dir.join("memoria.sqlite");
+        let pool=db::connect(&path).await.unwrap();
+        let now=now_ms();
+        for index in 0..5 {
+            let task=tasks::create(&pool,&format!("Vencido {}", index)).await.unwrap();
+            schedule(&pool,"task",&task.id,now-10_000,"none").await.unwrap();
+        }
+        assert_eq!(count_due(&pool,now).await.unwrap(),5);
+        let claimed=claim_due(&pool,now).await.unwrap();
+        assert_eq!(claimed.len(),5);
+        let ids: Vec<String>=claimed.iter().map(|r|r.id.clone()).collect();
+        record_suppressed(&pool,&ids,now).await.unwrap();
+        assert_eq!(list_events(&pool).await.unwrap().iter().filter(|e| e.kind=="suppressed").count(),5);
+        assert_eq!(list(&pool).await.unwrap().iter().filter(|r|r.state=="attention").count(),5);
+        assert!(claimed.iter().all(|r|r.dispatched_at.is_none()));
+        pool.close().await; let _=fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

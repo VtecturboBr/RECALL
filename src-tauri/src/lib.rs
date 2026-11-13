@@ -352,6 +352,7 @@ pub fn run() {
                 loop {
                     interval.tick().await;
                     let now = db::now_ms();
+                    let pending_count = reminders::count_due(&pool, now).await.unwrap_or(0);
                     let due = match reminders::claim_due(&pool, now).await {
                         Ok(items) => items,
                         Err(e) => { eprintln!("Falha ao verificar lembretes: {e}"); continue; }
@@ -361,14 +362,19 @@ pub fn run() {
                     // After a long offline period, avoid a flood of individual toasts:
                     // one short summary for a batch, while each item stays in the inbox.
                     if due.len() > 3 || due.iter().any(|r| r.due_at < now - 6 * 60 * 60 * 1000) {
+                        let ids: Vec<String> = due.iter().map(|r| r.id.clone()).collect();
                         if now - last_bulk_toast_at < 60 * 60 * 1000 {
-                            // All occurrences were already claimed and remain
-                            // visible in the attention inbox. No repeat toast.
+                            // Already covered by the earlier summary: preserve the
+                            // durable attention state and record the suppressed hint.
+                            if let Err(e) = reminders::record_suppressed(&pool, &ids, now).await {
+                                eprintln!("Falha ao registrar resumo agrupado: {e}");
+                            }
                             continue;
                         }
                         last_bulk_toast_at = now;
-                        let ids: Vec<String> = due.iter().map(|r| r.id.clone()).collect();
-                        let body = format!("{} lembrete(s) precisam da sua atenção. Abra o RECALL.", due.len());
+                        // The first summary covers the whole backlog, not only LIMIT 150.
+                        let body = format!("{} lembrete(s) precisam da sua atenção. Abra o RECALL.",
+                            pending_count.max(due.len() as i64));
                         let result = handle.notification().builder()
                             .title("RECALL — lembretes pendentes").body(&body).show();
                         let error = result.as_ref().err().map(|e| e.to_string());
@@ -377,13 +383,11 @@ pub fn run() {
                         }
                     } else {
                         for item in due {
-                            let text = if item.details.trim().is_empty() {
-                                "Você tem algo para lembrar.".to_string()
-                            } else {
-                                item.details.chars().take(150).collect()
-                            };
-                            let result = handle.notification().builder().title(&item.title)
-                                .body(&text).show();
+                            // Windows notifications may appear on the locked screen:
+                            // never expose personal note/task titles or bodies by default.
+                            let result = handle.notification().builder()
+                                .title("RECALL — lembrete")
+                                .body("Você tem algo para lembrar. Abra o RECALL.").show();
                             let error = result.as_ref().err().map(|e| e.to_string());
                             if let Err(e) = reminders::record_dispatch(
                                 &pool, &[item.id.clone()], now, error.as_deref(),
