@@ -16,6 +16,7 @@
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../lib/editorSafety';
+  import { saveOwnedDraft, discardOwnedDraft } from '../lib/draftOwnership';
   import type { Note, Task, FocusSession as StoredFocusSession, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
 
   type View = 'now' | 'archive';
@@ -87,12 +88,12 @@
   function preserveNoteDraft() {
     if (!draftNoteId) return;
     try {
-      localStorage.setItem(draftKey(draftNoteId),
-        JSON.stringify({title:noteTitle,body:noteBody,revision:noteRevision}));
+      saveOwnedDraft(draftKey(draftNoteId),
+        {title:noteTitle,body:noteBody,revision:noteRevision});
     } catch { /* Database save remains authoritative; storage may be full. */ }
   }
   function discardLocalDraftByKey(key: string) {
-    try { localStorage.removeItem(key); } catch { /* Storage unavailable. */ }
+    try { discardOwnedDraft(key); } catch { /* Storage unavailable. */ }
   }
   function discardLocalDraft(id: string) { discardLocalDraftByKey(draftKey(id)); }
   let noteSaving = $state(false);
@@ -108,7 +109,7 @@
   function ideaDraftKey(id: string) { return 'recall-idea-draft:' + id; }
   function preserveIdeaDraft() {
     if (!draftIdeaId) return;
-    try { localStorage.setItem(ideaDraftKey(draftIdeaId), JSON.stringify({ text: ideaText, revision: ideaRevision })); }
+    try { saveOwnedDraft(ideaDraftKey(draftIdeaId), { text: ideaText, revision: ideaRevision }); }
     catch { /* Writing to SQLite remains authoritative. */ }
   }
   let ideaSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -125,9 +126,9 @@
   function taskDraftKey(id: string) { return 'recall-task-draft:' + id; }
   function preserveTaskDraft() {
     if (!draftTaskId) return;
-    try { localStorage.setItem(taskDraftKey(draftTaskId), JSON.stringify({
+    try { saveOwnedDraft(taskDraftKey(draftTaskId), {
       title: taskTitle, details: taskDetails, due: taskDue, revision: taskRevision
-    })); } catch { /* Writing to SQLite remains authoritative. */ }
+    }); } catch { /* Writing to SQLite remains authoritative. */ }
   }
   let taskSaveTimer: ReturnType<typeof setTimeout> | undefined;
   let taskSaveInFlight: Promise<boolean> | null = null;
