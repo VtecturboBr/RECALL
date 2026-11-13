@@ -106,6 +106,7 @@ pub async fn to_note(pool: &SqlitePool, id: &str) -> Result<db::Note, sqlx::Erro
         VALUES(?,'converted_note',?,?)
         ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,target_id=excluded.target_id,changed_at=excluded.changed_at")
         .bind(id).bind(&note_id).bind(now).execute(&mut *transaction).await?;
+    crate::links::transfer_from_idea_in_tx(&mut transaction,id,"note",&note_id).await?;
     transaction.commit().await?;
     db::get(pool, &note_id).await?.ok_or(sqlx::Error::RowNotFound)
 }
@@ -127,6 +128,7 @@ pub async fn to_task(pool: &SqlitePool, id: &str) -> Result<Task, sqlx::Error> {
         VALUES(?,'converted_task',?,?)
         ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,target_id=excluded.target_id,changed_at=excluded.changed_at")
         .bind(id).bind(&task_id).bind(now).execute(&mut *transaction).await?;
+    crate::links::transfer_from_idea_in_tx(&mut transaction,id,"task",&task_id).await?;
     transaction.commit().await?;
     crate::tasks::get(pool, &task_id).await?.ok_or(sqlx::Error::RowNotFound)
 }
