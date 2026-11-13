@@ -310,6 +310,7 @@ mod planning_tests {
             sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger}"))
                 .execute(&pool).await.unwrap();
         }
+        sqlx::query("DROP TABLE focus_sessions").execute(&pool).await.unwrap();
         sqlx::query("DROP TABLE content_history").execute(&pool).await.unwrap();
         sqlx::query("DROP TABLE inbox_dispositions").execute(&pool).await.unwrap();
         sqlx::query("DROP TABLE task_resumes").execute(&pool).await.unwrap();
