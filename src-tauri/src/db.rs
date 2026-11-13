@@ -126,12 +126,12 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
             sqlx::Error::Protocol(format!("Backup obrigatório pré-Alpha 8 falhou: {e}"))
         )?;
     }
-    if starting_version < 6 && existing_user_tables > 0 {
+    if starting_version == 5 && existing_user_tables > 0 {
         create_backup(&pool, path, "pre-alpha9").await.map_err(|e|
             sqlx::Error::Protocol(format!("Backup obrigatório pré-Alpha 9 falhou: {e}"))
         )?;
     }
-    if starting_version < 7 && existing_user_tables > 0 {
+    if starting_version == 6 && existing_user_tables > 0 {
         create_backup(&pool, path, "pre-alpha9-links").await.map_err(|e|
             sqlx::Error::Protocol(format!("Backup obrigatório pré-Alpha 9.1 falhou: {e}"))
         )?;
@@ -374,10 +374,8 @@ mod integrity_tests {
         assert_eq!(first.title, "Meu texto");
         assert_eq!(first.body, "Preservar");
         let backups = list_backups(&path).unwrap();
-        assert_eq!(backups.len(), 4, "each legacy upgrade needs its own verified snapshot");
+        assert_eq!(backups.len(), 2, "a single verified pre-v5 snapshot covers all later additive migrations");
         assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha8") && b.size_bytes > 0));
-        assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha9") && b.size_bytes > 0));
-        assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha9-links") && b.size_bytes > 0));
         assert!(backups.iter().any(|b| b.file_name.contains("pre-integrity") && b.size_bytes > 0));
 
         let changed = save(&pool, "old", "Revisado", "Conteúdo", 0).await.unwrap().unwrap();
