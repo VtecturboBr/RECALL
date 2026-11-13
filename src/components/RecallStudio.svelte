@@ -12,6 +12,7 @@
   import TaskResume from './TaskResume.svelte';
   import FocusSession from './FocusSession.svelte';
   import LinkedItems from './LinkedItems.svelte';
+  import DailyReview from './DailyReview.svelte';
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../lib/editorSafety';
@@ -1064,6 +1065,8 @@
               </form>
             </section>
           </div>
+
+          <DailyReview onOpen={(key) => { void archiveEntry(key); }}/>
 
           <section class="re-section re-reminders" aria-label="Central de lembretes">
             <div class="re-section-heading re-reminder-heading">
