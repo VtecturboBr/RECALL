@@ -64,3 +64,11 @@ Após cada entrega concreta: registrar branch, commit/PR, funcionalidades modifi
 - Documento: `docs/LEMBRETES_2_ALPHA5.md`.
 - Necessário: CI completa da branch, build NSIS, testes reais Windows com permissão nativa de notificações e migração de banco teste. Não declarar estável sem esse ciclo.
 - Próxima fase posterior, fora do escopo: modo Onde parei?.
+
+## Alpha 6 — Redesign de frontend (experimental)
+
+- Branch: `feature/v0.5-alpha6-frontend-redesign` derivada da Alpha 5, PR #7 ainda em rascunho.
+- Escopo: reformulação completa da camada visual (Agora, Arquivo, editores, captura global, cartões e apresentação) com CSS consolidado, mantendo Rust/SQLite e contratos IPC da Alpha 5.
+- Direção adotada: editorial minimalista, comparada com central operacional e workspace de cartões; vermelho #E90530 como acento.
+- Arquivos-chave: `src/components/RecallStudio.svelte`, `src/recall.css`, `src/capture-redesign.css`, `src/sticky-redesign.css`, `docs/REDESIGN_ALPHA6.md`.
+- Pendente: validar builds e UI no Windows (foco de teclado, captura, editor, lembretes, backup, cartões). PR separado, sem merge na main.

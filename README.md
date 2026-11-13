@@ -79,3 +79,7 @@ A branch \`feature/v0.5-alpha4-integridade\` adiciona revisão de notas, detecç
 ## Alpha 5 — Lembretes 2.0 (experimental)
 
 Lembretes persistentes para notas e tarefas, recorrência, adiamento e histórico no próprio SQLite. A organização Agora/Arquivo é preservada. Consulte [o guia Alpha 5](docs/LEMBRETES_2_ALPHA5.md). PR separado sobre a Alpha 4.1, ainda sem merge na main.
+
+## Alpha 6 — Interface redesenhada (branch experimental)
+
+Refatoração visual completa: navegação, foco, Arquivo, editores, captura, lembretes e cartões flutuantes, preservando a base de dados e os comandos nativos. Veja [REDESIGN_ALPHA6.md](docs/REDESIGN_ALPHA6.md).
