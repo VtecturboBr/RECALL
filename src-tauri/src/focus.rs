@@ -126,12 +126,26 @@ pub async fn stop(pool: &SqlitePool, id: &str, state: &str, summary: &str) -> Re
 pub async fn finish_task_in_tx(
     tx: &mut sqlx::Transaction<'_,sqlx::Sqlite>, task_id: &str,
 ) -> Result<(),sqlx::Error> {
+    finish_task_with_summary_in_tx(tx, task_id, None).await
+}
+
+/// Closing the active session and saving a draft summary occur in the same
+/// transaction as task completion/deletion. No orphaned local-only summary.
+pub async fn finish_task_with_summary_in_tx(
+    tx: &mut sqlx::Transaction<'_,sqlx::Sqlite>, task_id: &str,
+    summary: Option<&str>,
+) -> Result<(),sqlx::Error> {
+    if summary.map(|text| text.chars().count() > 2_000).unwrap_or(false) {
+        return Err(sqlx::Error::Protocol("Resumo da sessão muito longo".into()));
+    }
     let now=now_ms();
     sqlx::query("UPDATE focus_sessions SET
        active_ms=active_ms+MIN(MAX(0,?-last_tick_at),?),
-       last_tick_at=?,ended_at=?,state='interrupted'
+       last_tick_at=?,ended_at=?,state='interrupted',
+       summary=COALESCE(?,summary)
        WHERE task_id=? AND state='active'")
-        .bind(now).bind(MAX_TICK_MS).bind(now).bind(now).bind(task_id)
+        .bind(now).bind(MAX_TICK_MS).bind(now).bind(now)
+        .bind(summary).bind(task_id)
         .execute(&mut **tx).await?;
     Ok(())
 }
