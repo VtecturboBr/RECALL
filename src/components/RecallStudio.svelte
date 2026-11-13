@@ -742,7 +742,10 @@
     try {
       const file = await backupsApi.create();
       backupMessage = 'Backup SQLite verificado: ' + file.file_path
-        + (unsaved ? ' · Atenção: este backup não inclui o rascunho ainda não salvo neste editor.' : '');
+        + (unsaved ? ' · Atenção: este backup não inclui o rascunho ainda não salvo neste editor.' : '')
+        + (file.size_bytes > 100 * 1024 * 1024
+            ? ' · Arquivo acima de 100 MB: acompanhe o espaço livre, sem apagar backups anteriores.'
+            : '');
     } catch (e) { error = 'Falha ao criar backup: ' + String(e); }
     finally { backupBusy = false; }
   }
