@@ -274,3 +274,26 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .re-resume-actions .re-outline{min-height:35px;font-size:12px}
 .re-resume-status{color:var(--re-secondary);font-size:12px;line-height:1.4}
 @media(max-width:680px){.re-resume-toggle>small{display:none}.re-resume-actions{align-items:flex-start;flex-direction:column}}
+
+
+/* Alpha 9.0: focus sessions live in Agora, not in an extra dashboard. */
+.re-focus-session{border-top:1px solid #48323c;margin-top:24px;padding-top:18px;max-width:730px}
+.re-focus-session-top{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.re-focus-session-heading{display:flex;align-items:center;gap:8px;font-size:12px;color:#edb5c6}
+.re-focus-session-heading svg{color:#ec6c89}
+.re-focus-session-live{display:inline-flex;align-items:center;gap:7px;color:#f2bdcc;font-size:11px}
+.re-focus-pulse{width:7px;height:7px;border-radius:50%;background:#f05d7f}
+.re-focus-hint{max-width:530px;font-size:12px;color:var(--re-secondary);line-height:1.6;margin:10px 0 15px}
+.re-focus-clock{font-size:clamp(28px,4vw,40px);font-weight:660;letter-spacing:-1.3px;font-variant-numeric:tabular-nums;margin:15px 0;color:#f2e5e9}
+.re-focus-note-label{display:block;color:#d8afbd;font-size:11px;margin:10px 0 7px;font-weight:620}
+.re-focus-session textarea{width:100%;min-height:70px;padding:12px;border:1px solid #4a3b43;border-radius:8px;color:var(--re-text);background:#151418;font:inherit;font-size:13px;resize:vertical;line-height:1.55}
+.re-focus-session textarea:focus-visible{outline:2px solid #f36683;outline-offset:2px}
+.re-focus-session-actions{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin-top:12px}
+.re-focus-message{font-size:12px;color:#ecc0ce;line-height:1.5;margin:12px 0}
+.re-focus-history-toggle{display:flex;align-items:center;gap:7px;color:#b6a2ad;font-size:12px;border:0;background:transparent;padding:12px 0 5px;margin-top:10px}
+.re-focus-history-toggle:hover{color:#fff}
+.re-focus-history{display:flex;flex-direction:column;gap:0;border-top:1px solid #40303b;margin-top:10px}
+.re-focus-history-item{padding:11px 0;border-bottom:1px solid #342a31;display:flex;gap:8px;flex-wrap:wrap;justify-content:space-between;font-size:12px;color:#d4bec8}
+.re-focus-history-item small{font-size:11px;color:#a996a0}
+.re-focus-history-item p{width:100%;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;color:var(--re-secondary);margin:1px 0 3px}
+@media(max-width:680px){.re-focus-session-actions{align-items:stretch}.re-focus-session-actions button{flex:1 1 135px}}
