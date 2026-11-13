@@ -81,6 +81,34 @@ def snapshot(source: Path, destination: Path) -> None:
         raise
 
 
+def recover_interrupted_restore(target: Path) -> bool:
+    """Recover an old database stranded by termination between two renames.
+
+    Only one unambiguous, integrity-checked original is restored. We never
+    delete/guess between multiple candidate databases.
+    """
+    if target.exists():
+        return False
+    wal = Path(str(target) + "-wal")
+    shm = Path(str(target) + "-shm")
+    if wal.exists() or shm.exists():
+        raise RestoreError(
+            "Banco ativo ausente com WAL/SHM restante. Interrompa a operação e preserve todos os arquivos."
+        )
+    candidates = sorted(target.parent.glob(".recall-original-*.sqlite"))
+    if not candidates:
+        return False
+    if len(candidates) != 1:
+        raise RestoreError(
+            "Restauração interrompida: há mais de um banco original; "
+            "recuperação automática ambígua. Preserve os arquivos."
+        )
+    verify_database(candidates[0])
+    os.replace(candidates[0], target)
+    verify_database(target)
+    return True
+
+
 def restore_database(backup: Path, target: Path) -> Path:
     """Restore a consistent snapshot only while the application is stopped.
 
@@ -91,6 +119,7 @@ def restore_database(backup: Path, target: Path) -> Path:
     if backup == target:
         raise RestoreError("O backup e o banco ativo não podem ser o mesmo arquivo.")
     ensure_not_running()
+    recover_interrupted_restore(target)
     verify_database(backup)
     verify_database(target)
 
@@ -142,6 +171,9 @@ def main() -> int:
     backup = args.backup.expanduser().resolve()
     target = (args.db or (backup.parent.parent / "memoria.sqlite")).expanduser().resolve()
     try:
+        if args.confirm:
+            ensure_not_running()
+            recover_interrupted_restore(target)
         original = verify_database(target)
         future = verify_database(backup)
         print(f"Banco atual: {target}\nContagens: {original}")
