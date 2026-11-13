@@ -161,6 +161,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completing_or_deleting_task_persists_active_focus_summary_atomically() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let one=tasks::create(&pool,"Concluir com texto").await.unwrap();
+        let running=start(&pool,&one.id).await.unwrap();
+        tasks::set_completed_with_summary(&pool,&one.id,true,Some("Resumo que não pode sumir"))
+            .await.unwrap();
+        let saved: String=sqlx::query_scalar(
+            "SELECT summary FROM focus_sessions WHERE id=? AND state='interrupted'")
+            .bind(&running.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(saved,"Resumo que não pode sumir");
+        let two=tasks::create(&pool,"Excluir com texto").await.unwrap();
+        let running=start(&pool,&two.id).await.unwrap();
+        tasks::delete_with_summary(&pool,&two.id,Some("Texto mantido ao excluir"))
+            .await.unwrap();
+        let saved: String=sqlx::query_scalar(
+            "SELECT summary FROM focus_sessions WHERE id=? AND state='interrupted'")
+            .bind(&running.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(saved,"Texto mantido ao excluir");
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn focus_lifecycle_and_restart_persist_summary() {
         let (dir,path)=fixture();
         let pool=db::connect(&path).await.unwrap();
