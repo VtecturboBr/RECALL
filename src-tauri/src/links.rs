@@ -17,16 +17,6 @@ pub struct ItemLink {
     pub created_at: i64,
 }
 
-#[derive(Debug, FromRow)]
-struct LinkRow {
-    id: String,
-    left_type: String,
-    left_id: String,
-    right_type: String,
-    right_id: String,
-    created_at: i64,
-}
-
 pub async fn migrate_v7(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("CREATE TABLE item_links (
@@ -123,37 +113,30 @@ pub async fn remove(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
 
 /// A 50-item bound prevents huge IPC payloads or N+1 loading in the inspector.
 /// Links to processed/excluded items stay in SQLite for later restoration.
+/// Filter inactive targets before the 50-item limit and retrieve all
+/// previews in ONE SQL query (no N+1 DB roundtrips).
 pub async fn list(pool: &SqlitePool, kind: &str, id: &str) -> Result<Vec<ItemLink>,sqlx::Error> {
     validate_endpoint(kind,id)?;
-    if !exists_active(pool,kind,id).await? {return Err(sqlx::Error::RowNotFound);}
-    let rows=sqlx::query_as::<_,LinkRow>(&format!(
-        "SELECT {LINK_FIELDS} FROM item_links
-         WHERE (left_type=? AND left_id=?) OR (right_type=? AND right_id=?)
-         ORDER BY created_at DESC,id DESC LIMIT 50"))
-        .bind(kind).bind(id).bind(kind).bind(id).fetch_all(pool).await?;
-    let mut entries=Vec::with_capacity(rows.len());
-    for row in rows {
-        let (other_type,other_id)=if row.left_type==kind && row.left_id==id {
-            (row.right_type,row.right_id)
-        } else {(row.left_type,row.left_id)};
-        let data:Option<(String,String)>=match other_type.as_str(){
-            "note"=>sqlx::query_as("SELECT COALESCE(NULLIF(TRIM(title),''),'Sem título'),
-                    SUBSTR(body,1,180) FROM notes WHERE id=? AND deleted_at IS NULL")
-                .bind(&other_id).fetch_optional(pool).await?,
-            "task"=>sqlx::query_as("SELECT title,SUBSTR(details,1,180) FROM tasks
-                    WHERE id=? AND deleted_at IS NULL")
-                .bind(&other_id).fetch_optional(pool).await?,
-            "idea"=>sqlx::query_as("SELECT SUBSTR(text,1,90),SUBSTR(text,1,180)
-                    FROM inbox_items WHERE id=? AND processed_at IS NULL")
-                .bind(&other_id).fetch_optional(pool).await?,
-            _=>None,
-        };
-        if let Some((title,preview))=data{
-            entries.push(ItemLink{id:row.id,item_type:other_type,item_id:other_id,
-                title,preview,created_at:row.created_at});
-        }
-    }
-    Ok(entries)
+    if !exists_active(pool,kind,id).await? { return Err(sqlx::Error::RowNotFound); }
+    sqlx::query_as::<_,ItemLink>(
+        "SELECT q.id,q.other_type AS item_type,q.other_id AS item_id,
+            COALESCE(NULLIF(TRIM(n.title),''),NULLIF(TRIM(t.title),''),
+              NULLIF(TRIM(SUBSTR(i.text,1,90)),''),'Sem título') AS title,
+            SUBSTR(COALESCE(n.body,t.details,i.text,''),1,180) AS preview,
+            q.created_at
+         FROM (
+            SELECT id,right_type AS other_type,right_id AS other_id,created_at
+              FROM item_links WHERE left_type=? AND left_id=?
+            UNION ALL
+            SELECT id,left_type AS other_type,left_id AS other_id,created_at
+              FROM item_links WHERE right_type=? AND right_id=?
+         ) q
+         LEFT JOIN notes n ON q.other_type='note' AND n.id=q.other_id AND n.deleted_at IS NULL
+         LEFT JOIN tasks t ON q.other_type='task' AND t.id=q.other_id AND t.deleted_at IS NULL
+         LEFT JOIN inbox_items i ON q.other_type='idea' AND i.id=q.other_id AND i.processed_at IS NULL
+         WHERE n.id IS NOT NULL OR t.id IS NOT NULL OR i.id IS NOT NULL
+         ORDER BY q.created_at DESC,q.id DESC LIMIT 50"
+    ).bind(kind).bind(id).bind(kind).bind(id).fetch_all(pool).await
 }
 
 #[cfg(test)]
