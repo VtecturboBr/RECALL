@@ -244,6 +244,46 @@ mod planning_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    #[tokio::test]
+    async fn resume_checkpoint_persists_and_rejects_stale_writes() {
+        let dir=test_dir(); let path=dir.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let task=super::create(&pool,"Explicar projeto").await.unwrap();
+        assert!(super::get_resume(&pool,&task.id).await.unwrap().is_none());
+        let (first,second)=tokio::join!(
+            super::save_resume(&pool,&task.id,"Falei sobre a arquitetura","Mostrar demo",0),
+            super::save_resume(&pool,&task.id,"Outra versão","Voltar ao começo",0)
+        );
+        assert_ne!(first.unwrap().is_some(),second.unwrap().is_some());
+        let row=super::get_resume(&pool,&task.id).await.unwrap().unwrap();
+        assert_eq!(row.revision,1);
+        let next=super::save_resume(&pool,&task.id,"Explicação finalizada","Responder perguntas",1)
+            .await.unwrap().unwrap();
+        assert_eq!(next.revision,2);
+        assert!(super::save_resume(&pool,&task.id,"Obsoleto","Não pode",1).await.unwrap().is_none());
+        pool.close().await;
+        let reopened=crate::db::connect(&path).await.unwrap();
+        let persisted=super::get_resume(&reopened,&task.id).await.unwrap().unwrap();
+        assert_eq!(persisted.next_step,"Responder perguntas");
+        reopened.close().await; let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn resume_migration_preserves_existing_tasks_and_creates_backup() {
+        let dir=test_dir(); let path=dir.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let task=super::create(&pool,"Tarefa pré-existente").await.unwrap();
+        sqlx::query("DROP TABLE task_resumes").execute(&pool).await.unwrap();
+        pool.close().await;
+        let reopened=crate::db::connect(&path).await.unwrap();
+        assert_eq!(super::get(&reopened,&task.id).await.unwrap().unwrap().title,"Tarefa pré-existente");
+        let backups=crate::db::list_backups(&path).unwrap();
+        assert!(backups.iter().any(|x| x.file_name.contains("pre-resume")));
+        let rev: i64=sqlx::query_scalar("PRAGMA user_version").fetch_one(&reopened).await.unwrap();
+        assert_eq!(rev,4);
+        reopened.close().await; let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn accepts_only_valid_bucket_and_schedule() {
         assert!(valid_plan("today", None));
