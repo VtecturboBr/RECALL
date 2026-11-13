@@ -693,11 +693,11 @@
         await openEntry('idea:' + created.id);
       } else if (entry.type === 'task') {
         const dueAt = taskDue ? new Date(taskDue).getTime() : null;
-        if (!taskTitle.trim() || (dueAt !== null && !Number.isFinite(dueAt))) {
+        if (dueAt !== null && !Number.isFinite(dueAt)) {
           throw new Error('Verifique o título e a data antes de criar a cópia.');
         }
         const created = await tasksApi.createPlanned(
-          taskTitle, taskDetails, entry.task.bucket, entry.task.planned_for, dueAt
+          taskTitleForSave(taskTitle), taskDetails, entry.task.bucket, entry.task.planned_for, dueAt
         );
         discardLocalDraftByKey(taskDraftKey(entry.task.id));
         taskDirty = false; taskConflict = false;
@@ -714,12 +714,19 @@
   }
 
   async function createBackup() {
-    if (backupBusy || !(await flushDraft())) return;
+    if (backupBusy) return;
+    // An unresolved editor conflict must never block protection of the
+    // authoritative SQLite database. Drafts live separately, not in this snapshot.
+    const unsaved = noteDirty || taskDirty || ideaDirty || noteConflict || taskConflict || ideaConflict;
+    if (noteDirty) preserveNoteDraft();
+    if (taskDirty) preserveTaskDraft();
+    if (ideaDirty) preserveIdeaDraft();
     backupBusy = true;
     backupMessage = '';
     try {
       const file = await backupsApi.create();
-      backupMessage = 'Backup verificado: ' + file.file_path;
+      backupMessage = 'Backup SQLite verificado: ' + file.file_path
+        + (unsaved ? ' · Atenção: este backup não inclui o rascunho ainda não salvo neste editor.' : '');
     } catch (e) { error = 'Falha ao criar backup: ' + String(e); }
     finally { backupBusy = false; }
   }
