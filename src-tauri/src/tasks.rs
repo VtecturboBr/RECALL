@@ -273,14 +273,25 @@ mod planning_tests {
         let dir=test_dir(); let path=dir.join("memoria.sqlite");
         let pool=crate::db::connect(&path).await.unwrap();
         let task=super::create(&pool,"Tarefa pré-existente").await.unwrap();
+        // Reconstruct a genuine pre-Alpha-7/8 fixture. A v5 database missing
+        // its history tables must be rejected, not silently "repaired".
+        for trigger in ["history_note_before_edit","history_task_before_edit",
+            "history_idea_before_edit","history_resume_before_edit",
+            "history_resume_external_revision"] {
+            sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger}"))
+                .execute(&pool).await.unwrap();
+        }
+        sqlx::query("DROP TABLE content_history").execute(&pool).await.unwrap();
+        sqlx::query("DROP TABLE inbox_dispositions").execute(&pool).await.unwrap();
         sqlx::query("DROP TABLE task_resumes").execute(&pool).await.unwrap();
+        sqlx::query("PRAGMA user_version = 3").execute(&pool).await.unwrap();
         pool.close().await;
         let reopened=crate::db::connect(&path).await.unwrap();
         assert_eq!(super::get(&reopened,&task.id).await.unwrap().unwrap().title,"Tarefa pré-existente");
         let backups=crate::db::list_backups(&path).unwrap();
         assert!(backups.iter().any(|x| x.file_name.contains("pre-resume")));
         let rev: i64=sqlx::query_scalar("PRAGMA user_version").fetch_one(&reopened).await.unwrap();
-        assert_eq!(rev,4);
+        assert_eq!(rev,5);
         reopened.close().await; let _=std::fs::remove_dir_all(dir);
     }
 
