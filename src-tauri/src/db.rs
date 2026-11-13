@@ -348,6 +348,37 @@ mod integrity_tests {
     }
 
     #[tokio::test]
+    async fn delete_note_is_atomic_even_when_cancelling_reminder_fails() {
+        let dir = temporary_dir();
+        let path = dir.join("memoria.sqlite");
+        let pool = connect(&path).await.unwrap();
+        let note = create_copy(&pool, "Important", "Não perder", "note").await.unwrap();
+        crate::reminders::schedule(&pool, "note", &note.id, now_ms() + 3_600_000, "none")
+            .await.unwrap();
+        sqlx::query("CREATE TRIGGER stop_note_cancel BEFORE INSERT ON reminder_events
+            WHEN NEW.kind='cancelled' BEGIN SELECT RAISE(ABORT, 'simulated cancel failure'); END")
+            .execute(&pool).await.unwrap();
+        assert!(delete(&pool, &note.id).await.is_err(), "delete must roll back");
+        let kept = get(&pool, &note.id).await.unwrap().unwrap();
+        assert_eq!(kept.body, "Não perder");
+        let state: String = sqlx::query_scalar("SELECT state FROM reminder_rules WHERE target_type='note' AND target_id=?")
+            .bind(&note.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(state, "scheduled");
+
+        sqlx::query("DROP TRIGGER stop_note_cancel").execute(&pool).await.unwrap();
+        delete(&pool, &note.id).await.unwrap();
+        assert!(get(&pool, &note.id).await.unwrap().is_none());
+        let archived_body: String = sqlx::query_scalar("SELECT body FROM notes WHERE id=?")
+            .bind(&note.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(archived_body, "Não perder", "deletion must be reversible later");
+        let cancelled: String = sqlx::query_scalar("SELECT state FROM reminder_rules WHERE target_type='note' AND target_id=?")
+            .bind(&note.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(cancelled, "cancelled");
+        pool.close().await;
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn snapshot_has_sqlite_integrity_and_all_committed_data() {
         let dir = temporary_dir();
         let path = dir.join("memoria.sqlite");
