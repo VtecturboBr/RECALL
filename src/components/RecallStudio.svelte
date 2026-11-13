@@ -43,6 +43,21 @@
   const FOCUS_KEY = 'recall-selected-focus-task-v1';
 
   let newText = $state('');
+  const INLINE_DRAFT_KEY = 'recall-inline-capture-draft-v1';
+  let captureDraftReady = $state(false);
+  // The capture survives a normal restart and a process crash, independently of SQLite.
+  $effect(() => {
+    if (!captureDraftReady) return;
+    const text = newText;
+    const kind = captureKind;
+    try {
+      if (text.length > 0) {
+        localStorage.setItem(INLINE_DRAFT_KEY, JSON.stringify({ text, kind, savedAt: Date.now() }));
+      } else {
+        localStorage.removeItem(INLINE_DRAFT_KEY);
+      }
+    } catch { /* Local storage may be unavailable; a failed DB write still leaves the composer intact. */ }
+  });
   let draftNoteId: string | null = null;
   let noteTitle = $state('');
   let noteBody = $state('');
@@ -129,6 +144,17 @@
 
   onMount(() => {
     try { focusedTaskId = localStorage.getItem(FOCUS_KEY); } catch { /* No local storage available. */ }
+    try {
+      const stored = localStorage.getItem(INLINE_DRAFT_KEY);
+      if (stored) {
+        const draft: unknown = JSON.parse(stored);
+        if (draft && typeof draft === 'object' && 'text' in draft && typeof draft.text === 'string') {
+          newText = draft.text.slice(0, 100000);
+          if ('kind' in draft && (draft.kind === 'task' || draft.kind === 'idea')) captureKind = draft.kind;
+        }
+      }
+    } catch { /* Invalid/blocked storage must not prevent starting RECALL. */ }
+    captureDraftReady = true;
     let alive = true;
     const dayClock = setInterval(() => { clock = new Date(); }, 60_000);
     const unlisteners: Array<() => void> = [];
@@ -175,8 +201,10 @@
     if (!newText.trim() || busy) return;
     busy = true;
     try {
-      const text = newText.trim();
-      if (captureKind === 'task') {
+      const originalText = newText;
+      const originalKind = captureKind;
+      const text = originalText.trim();
+      if (originalKind === 'task') {
         const draft = parseTaskCapture(text, new Date());
         if (!draft.title.trim() || draft.title.length > 250) throw new Error('Use um título de até 250 caracteres.');
         const task = await tasksApi.createPlanned(draft.title, draft.details, draft.bucket, draft.plannedFor, draft.dueAt);
@@ -184,7 +212,9 @@
       } else {
         await inboxApi.capture(text);
       }
-      newText = '';
+      // Do not erase newer typing made while the asynchronous database write was in flight.
+      // The reactive draft persists until the database confirms success.
+      if (newText === originalText && captureKind === originalKind) newText = '';
       await refresh();
     } catch (e) {
       error = 'A anotação não foi salva: ' + String(e);
