@@ -4,6 +4,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { X, NotebookPen, Copy } from 'lucide-svelte';
   import { notesApi } from '../lib/api';
+  import { saveOwnedDraft, discardOwnedDraft } from '../lib/draftOwnership';
   import type { Note } from '../lib/types';
 
   let { id }: { id: string } = $props();
@@ -20,13 +21,12 @@
   function preserveDraft() {
     if (!note) return;
     try {
-      localStorage.setItem(draftKey(),
-        JSON.stringify({ title: note.title, body: note.body, revision: note.revision }));
+      saveOwnedDraft(draftKey(), { title: note.title, body: note.body, revision: note.revision });
     } catch { /* SQLite is authoritative; local recovery is best effort. */ }
   }
 
   function clearDraft() {
-    try { localStorage.removeItem(draftKey()); } catch { /* Storage unavailable. */ }
+    try { discardOwnedDraft(draftKey()); } catch { /* Storage unavailable. */ }
   }
 
   async function load() {
