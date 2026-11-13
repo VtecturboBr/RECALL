@@ -248,9 +248,15 @@ pub async fn set_reminder(pool: &SqlitePool, id: &str, remind_at: Option<i64>) -
 }
 
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE notes SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL")
-        .bind(now_ms()).bind(now_ms()).bind(id).execute(pool).await?;
-    Ok(())
+    // Soft-delete and reminder cancellation must commit together. A failure in
+    // the reminder event log must not leave a note silently deleted.
+    let now = now_ms();
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query("UPDATE notes SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL")
+        .bind(now).bind(now).bind(id).execute(&mut *tx).await?;
+    if result.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
+    crate::reminders::cancel_in_tx(&mut tx, "note", id).await?;
+    tx.commit().await
 }
 
 pub async fn due(pool: &SqlitePool) -> Result<Vec<Note>, sqlx::Error> {
