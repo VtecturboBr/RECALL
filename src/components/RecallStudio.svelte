@@ -10,6 +10,7 @@
   import { notesApi, tasksApi, inboxApi, backupsApi, remindersApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
   import TaskResume from './TaskResume.svelte';
+  import FocusSession from './FocusSession.svelte';
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../lib/editorSafety';
@@ -1005,6 +1006,7 @@
                   <button class="re-outline" onclick={() => { void archiveEntry('task:' + currentTask.id); }}>Abrir detalhes <ArrowUpRight size={15}/></button>
                 </div>
                 {#key currentTask.id}
+                  <FocusSession taskId={currentTask.id}/>
                   <TaskResume taskId={currentTask.id} taskTitle={currentTask.title}/>
                 {/key}
               </div>
