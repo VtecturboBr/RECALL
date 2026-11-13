@@ -32,7 +32,11 @@ export function buildWorkspace(notes: Note[], tasks: Task[], ideas: InboxItem[])
       idea
     }))
   ];
-  return entries.sort((a, b) => b.updatedAt - a.updatedAt || a.key.localeCompare(b.key));
+  return entries.sort((a, b) => {
+    const aPinned = a.type === 'note' && a.note.pinned ? 1 : 0;
+    const bPinned = b.type === 'note' && b.note.pinned ? 1 : 0;
+    return bPinned - aPinned || b.updatedAt - a.updatedAt || a.key.localeCompare(b.key);
+  });
 }
 
 export function nextTask(tasks: Task[]): Task | null {

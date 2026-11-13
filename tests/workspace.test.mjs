@@ -52,3 +52,11 @@ test('presentation cards split only on standalone separators', () => {
   assert.deepEqual(toSlides('Primeiro\n---\nSegundo\n---\nTerceiro'), ['Primeiro', 'Segundo', 'Terceiro']);
   assert.deepEqual(toSlides('A---B'), ['A---B']);
 });
+
+test('pinned notes remain at the top after more recent items are edited', () => {
+  const pinned = {...note('pin', 'Fixa', '', 1), pinned: true};
+  const result = buildWorkspace([pinned, note('latest', 'Nova', '', 400)], [task('t', 'Feita', null, 500)], []);
+  assert.deepEqual(result.map(e => e.key), ['note:pin', 'task:t', 'note:latest']);
+  assert.deepEqual(searchWorkspace(result, 'feita').map(e => e.key), ['task:t']);
+  assert.deepEqual(buildWorkspace([{...pinned,pinned:false}],[],[]).map(e=>e.key), ['note:pin']);
+});

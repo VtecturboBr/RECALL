@@ -14,6 +14,7 @@
   let editTitle = $state('');
   let editDetails = $state('');
   let editDue = $state('');
+  let editRevision = $state(0);
   let showCompleted = $state(false);
 
   let pending = $derived(tasks.filter(task => task.completed_at === null));
@@ -52,6 +53,7 @@
     editTitle = task.title;
     editDetails = task.details;
     editDue = toLocalInput(task.due_at);
+    editRevision = task.revision;
   }
   async function saveEdit() {
     if (!editingId || !editTitle.trim() || busy) return;
@@ -59,7 +61,7 @@
     if (due !== null && !Number.isFinite(due)) { error = 'Data inválida.'; return; }
     busy = true;
     try {
-      await tasksApi.update(editingId, editTitle, editDetails, due);
+      await tasksApi.update(editingId, editTitle, editDetails, due, editRevision);
       editingId = null;
       await refresh();
     } catch (e) { error = 'Não foi possível salvar: ' + String(e); }
