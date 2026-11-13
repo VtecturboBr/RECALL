@@ -252,6 +252,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn hiding_first_twelve_review_candidates_exposes_next_eight() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let now=db::now_ms();
+        for i in 0..20 {
+            let task=tasks::create(&pool,&format!("Revisar {i}")).await.unwrap();
+            sqlx::query("UPDATE tasks SET created_at=?,updated_at=? WHERE id=?")
+                .bind(now-10*DAY_MS).bind(now-10*DAY_MS).bind(&task.id)
+                .execute(&pool).await.unwrap();
+        }
+        let first=list_at(&pool,now).await.unwrap();
+        assert_eq!(first.len(),12);
+        let excluded: HashSet<String>=first.iter().map(|item|
+            format!("{}:{}:{}",item.target_type,item.target_id,item.kind)).collect();
+        let second=list_at_excluding(&pool,now,&excluded).await.unwrap();
+        assert_eq!(second.len(),8);
+        assert!(second.iter().all(|item| !excluded.contains(
+            &format!("{}:{}:{}",item.target_type,item.target_id,item.kind))));
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn review_limits_payload_without_changing_any_items() {
         let (dir,path)=fixture();
         let pool=db::connect(&path).await.unwrap();
