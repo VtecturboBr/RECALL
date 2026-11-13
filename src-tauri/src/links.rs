@@ -201,6 +201,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn idea_conversion_copies_only_live_relations_and_keeps_original_history() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let idea=inbox::capture(&pool,"Nova ideia").await.unwrap();
+        let note=db::create_copy(&pool,"Referência","Texto","note").await.unwrap();
+        let stale=db::create_copy(&pool,"Excluída","Texto","note").await.unwrap();
+        let old=add(&pool,"idea",&idea.id,"note",&note.id).await.unwrap();
+        add(&pool,"idea",&idea.id,"note",&stale.id).await.unwrap();
+        db::delete(&pool,&stale.id).await.unwrap();
+        let created=inbox::to_task(&pool,&idea.id).await.unwrap();
+        let visible=list(&pool,"task",&created.id).await.unwrap();
+        assert_eq!(visible.len(),1);
+        assert_eq!(visible[0].item_id,note.id);
+        let old_still_exists: i64=sqlx::query_scalar("SELECT COUNT(*) FROM item_links WHERE id=?")
+            .bind(&old).fetch_one(&pool).await.unwrap();
+        assert_eq!(old_still_exists,1);
+        let next_idea=inbox::capture(&pool,"Outra").await.unwrap();
+        add(&pool,"idea",&next_idea.id,"task",&created.id).await.unwrap();
+        let converted=inbox::to_note(&pool,&next_idea.id).await.unwrap();
+        assert_eq!(list(&pool,"note",&converted.id).await.unwrap().len(),1);
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn symmetric_duplicate_safe_and_self_link_rejected() {
         let (dir,path)=fixture();
         let pool=db::connect(&path).await.unwrap();
