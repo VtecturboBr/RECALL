@@ -592,6 +592,38 @@
     }
   }
 
+  async function saveTextConflictCopy() {
+    const entry = selected;
+    if (!entry || busy) return;
+    busy = true;
+    try {
+      if (entry.type === 'idea') {
+        const created = await inboxApi.capture(ideaText);
+        discardLocalDraftByKey(ideaDraftKey(entry.idea.id));
+        ideaDirty = false; ideaConflict = false;
+        await refresh();
+        await openEntry('idea:' + created.id);
+      } else if (entry.type === 'task') {
+        const dueAt = taskDue ? new Date(taskDue).getTime() : null;
+        if (!taskTitle.trim() || (dueAt !== null && !Number.isFinite(dueAt))) {
+          throw new Error('Verifique o título e a data antes de criar a cópia.');
+        }
+        const created = await tasksApi.createPlanned(
+          taskTitle, taskDetails, entry.task.bucket, entry.task.planned_for, dueAt
+        );
+        discardLocalDraftByKey(taskDraftKey(entry.task.id));
+        taskDirty = false; taskConflict = false;
+        await refresh();
+        await openEntry('task:' + created.id);
+      }
+      error = 'Cópia salva separadamente. O item original foi mantido.';
+    } catch (e) {
+      if (entry.type === 'idea') preserveIdeaDraft();
+      if (entry.type === 'task') preserveTaskDraft();
+      error = 'Falha ao criar uma cópia. Sua edição continua preservada: ' + String(e);
+    } finally { busy = false; }
+  }
+
   async function createBackup() {
     if (backupBusy || !(await flushDraft())) return;
     backupBusy = true;
@@ -808,6 +840,12 @@
       <div class="re-banner re-banner-conflict" role="alert">
         <span>Conflito de edição: outra janela modificou esta nota. Seu texto permanece aqui.</span>
         <button class="re-small-action" onclick={() => { void saveConflictCopy(); }}>Salvar como outra nota</button>
+      </div>
+    {/if}
+    {#if (ideaConflict && selected?.type === 'idea') || (taskConflict && selected?.type === 'task')}
+      <div class="re-banner re-banner-conflict" role="alert">
+        <span>Este item mudou em outra janela. O conteúdo que você escreveu está preservado.</span>
+        <button class="re-small-action" disabled={busy} onclick={() => { void saveTextConflictCopy(); }}>Salvar como novo item</button>
       </div>
     {/if}
 
