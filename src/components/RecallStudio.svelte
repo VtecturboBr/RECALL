@@ -9,6 +9,7 @@
   } from 'lucide-svelte';
   import { notesApi, tasksApi, inboxApi, backupsApi, remindersApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
+  import TaskResume from './TaskResume.svelte';
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
@@ -923,6 +924,9 @@
                   <button class="re-primary" disabled={busy} onclick={() => { void completeTask(currentTask); }}><Check size={17}/> Marcar como concluída</button>
                   <button class="re-outline" onclick={() => { void archiveEntry('task:' + currentTask.id); }}>Abrir detalhes <ArrowUpRight size={15}/></button>
                 </div>
+                {#key currentTask.id}
+                  <TaskResume taskId={currentTask.id} taskTitle={currentTask.title}/>
+                {/key}
               </div>
             {:else}
               <div class="re-focus-content re-focus-empty">
