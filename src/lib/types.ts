@@ -46,6 +46,15 @@ export interface TaskResume {
   revision: number;
 }
 
+export interface ItemLink {
+  id: string;
+  item_type: 'note' | 'task' | 'idea';
+  item_id: string;
+  title: string;
+  preview: string;
+  created_at: number;
+}
+
 export interface InboxItem {
   id: string;
   text: string;
