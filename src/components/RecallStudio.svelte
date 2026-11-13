@@ -10,7 +10,7 @@
   import { notesApi, tasksApi, inboxApi, backupsApi, remindersApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
   import TaskResume from './TaskResume.svelte';
-  import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod } from '../lib/workspace';
+  import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
 
@@ -157,8 +157,7 @@
     if (!(await flushNote()) || !draftNoteId) return;
     let restored = 0;
     try {
-      const saved = Number(localStorage.getItem(slidePositionKey(draftNoteId)) ?? '0');
-      if (Number.isInteger(saved) && saved >= 0) restored = saved;
+      restored = resumeSlideIndex(localStorage.getItem(slidePositionKey(draftNoteId)), slides.length);
     } catch { /* Start at first card when storage is unavailable. */ }
     slideIndex = Math.min(restored, Math.max(0, slides.length - 1));
     presenting = true;
