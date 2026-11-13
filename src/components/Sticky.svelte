@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { Grip, X, Check, StickyNote, Copy } from 'lucide-svelte';
+  import { X, NotebookPen, Copy } from 'lucide-svelte';
   import { notesApi } from '../lib/api';
   import type { Note } from '../lib/types';
 
@@ -15,18 +15,18 @@
   let timer: ReturnType<typeof setTimeout> | undefined;
   let saveInFlight: Promise<boolean> | null = null;
   const windowHandle = getCurrentWindow();
-  const draftKey = 'recall-sticky-draft:' + id;
+  function draftKey() { return 'recall-sticky-draft:' + id; }
 
   function preserveDraft() {
     if (!note) return;
     try {
-      localStorage.setItem(draftKey,
+      localStorage.setItem(draftKey(),
         JSON.stringify({ title: note.title, body: note.body, revision: note.revision }));
     } catch { /* SQLite is authoritative; local recovery is best effort. */ }
   }
 
   function clearDraft() {
-    try { localStorage.removeItem(draftKey); } catch { /* Storage unavailable. */ }
+    try { localStorage.removeItem(draftKey()); } catch { /* Storage unavailable. */ }
   }
 
   async function load() {
@@ -37,7 +37,7 @@
       if (dirty || saving || saveInFlight) return;
       let restored = false;
       try {
-        const raw = localStorage.getItem(draftKey);
+        const raw = localStorage.getItem(draftKey());
         if (raw) {
           const cached = JSON.parse(raw) as { title?: string; body?: string; revision?: number };
           if (typeof cached.title === 'string' && typeof cached.body === 'string'
@@ -138,32 +138,31 @@
     if (await persist()) await windowHandle.hide();
   }
 </script>
-
 <svelte:head><title>Nota flutuante — RECALL</title></svelte:head>
-<div class="sticky-shell">
-  <header class="sticky-header" data-tauri-drag-region>
-    <div data-tauri-drag-region><Grip size={15}/><span data-tauri-drag-region>NOTA FLUTUANTE</span></div>
+
+<section class="re-sticky" aria-label="Nota flutuante">
+  <header class="re-sticky-head" data-tauri-drag-region>
+    <div data-tauri-drag-region><span class="re-sticky-dot"></span><span data-tauri-drag-region>RECALL <small data-tauri-drag-region>/ NOTA FLUTUANTE</small></span></div>
     <button title="Fechar cartão" aria-label="Fechar cartão" onclick={() => { void close(); }}><X size={17}/></button>
   </header>
   {#if note}
-    <div class="sticky-content">
-      <input aria-label="Título da nota flutuante" value={note.title} placeholder="Título da nota" maxlength="250"
-        oninput={(e) => edit('title', e.currentTarget.value)}/>
-      <textarea aria-label="Conteúdo da nota flutuante" value={note.body} placeholder="Sua anotação..." maxlength="100000"
-        oninput={(e) => edit('body', e.currentTarget.value)}></textarea>
+    <div class="re-sticky-edit">
+      <label for="re-sticky-title" class="re-visually-hidden">Título da nota</label>
+      <input id="re-sticky-title" value={note.title} placeholder="Sem título" maxlength="250" oninput={(e) => edit('title', e.currentTarget.value)}/>
+      <label for="re-sticky-body" class="re-visually-hidden">Texto da nota</label>
+      <textarea id="re-sticky-body" value={note.body} placeholder="Escreva alguma coisa..." maxlength="100000" oninput={(e) => edit('body', e.currentTarget.value)}></textarea>
     </div>
-    <footer class="sticky-footer">
-      <div><StickyNote size={14}/> RECALL</div>
-      <span aria-live="polite"><Check size={12}/>{conflict ? 'Conflito' : saving ? 'Salvando' : dirty ? 'Não salva' : 'Salva'}</span>
+    <footer class="re-sticky-foot">
+      <span><NotebookPen size={14}/> O que importa, à vista.</span>
+      <span aria-live="polite"><span class="re-sticky-state-dot" class:pending={dirty || saving || conflict}></span>{conflict ? 'Conflito' : saving ? 'Salvando' : dirty ? 'Pendente' : 'Salvo'}</span>
     </footer>
   {:else}
-    <div class="sticky-content loading-sticky">Carregando cartão...</div>
+    <div class="re-sticky-loading">Abrindo nota...</div>
   {/if}
   {#if error}
-    <div class="sticky-error" role="alert">{error}
-      {#if conflict}
-        <button class="sticky-copy-button" onclick={() => { void saveCopyAndClose(); }}><Copy size={14}/> Salvar meu texto como nova nota e fechar</button>
-      {/if}
+    <div class="re-sticky-error" role="alert">
+      <span>{error}</span>
+      {#if conflict}<button onclick={() => { void saveCopyAndClose(); }}><Copy size={14}/> Guardar como outra nota e fechar</button>{/if}
     </div>
   {/if}
-</div>
+</section>

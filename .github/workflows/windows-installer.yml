@@ -9,6 +9,7 @@ on:
       - 'feature/v0.5-alpha4-captura-tempo'
       - 'feature/v0.5-alpha4-integridade'
       - 'feature/v0.5-alpha5-lembretes2'
+      - 'feature/v0.5-alpha6-frontend-redesign'
   workflow_dispatch:
 
 permissions:
@@ -73,7 +74,7 @@ jobs:
       - name: Publicar instalador para download
         uses: actions/upload-artifact@v4
         with:
-          name: RECALL-v0.5-alpha5-lembretes2-Windows-x64
+          name: RECALL-v0.5-alpha6-redesign-Windows-x64
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/bundle/nsis/SHA256SUMS.txt
