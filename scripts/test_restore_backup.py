@@ -11,11 +11,11 @@ from restore_backup import RestoreError, recover_interrupted_restore, restore_da
 def make_database(path: Path, text: str) -> None:
     with closing(sqlite3.connect(path)) as db:
         with db:
-            db.execute("CREATE TABLE notes(
+            db.execute("""CREATE TABLE notes(
                 id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
                 kind TEXT NOT NULL DEFAULT 'note',created_at INTEGER NOT NULL DEFAULT 0,
                 updated_at INTEGER NOT NULL DEFAULT 0,deleted_at INTEGER
-            )")
+            )""")
             db.execute("PRAGMA user_version=1")
             db.execute("INSERT INTO notes(id,title) VALUES('n1',?)", (text,))
 
