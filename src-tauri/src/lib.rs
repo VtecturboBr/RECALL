@@ -133,6 +133,27 @@ async fn update_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, i
     Ok(task)
 }
 #[tauri::command]
+async fn get_task_resume(
+    state: tauri::State<'_, AppState>, task_id: String,
+) -> Result<Option<tasks::TaskResume>, String> {
+    tasks::get_resume(&state.pool, &task_id).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn save_task_resume(
+    state: tauri::State<'_, AppState>, app: tauri::AppHandle,
+    task_id: String, last_context: String, next_step: String, expected_revision: i64,
+) -> Result<tasks::TaskResume, String> {
+    if expected_revision < 0 || last_context.chars().count() > 15_000 || next_step.chars().count() > 2_000 {
+        return Err("Ponto de retomada inválido".into());
+    }
+    let saved = tasks::save_resume(
+        &state.pool, &task_id, &last_context, &next_step, expected_revision
+    ).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "CONFLITO_REVISAO: O ponto de retomada mudou em outra janela ou a tarefa foi excluída.".to_string())?;
+    let _ = app.emit("tasks:resume-changed", &task_id);
+    Ok(saved)
+}
+#[tauri::command]
 async fn set_task_completed(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, completed: bool) -> Result<tasks::Task, String> {
     let task = tasks::set_completed(&state.pool, &id, completed).await.map_err(|e| e.to_string())?;
     if completed { let _ = app.emit("reminders:changed", &id); }
@@ -281,7 +302,7 @@ async fn inbox_to_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle,
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, create_note_copy, create_data_backup, list_data_backups, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, create_planned_task, set_task_plan, update_task, set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task,
+        .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, create_note_copy, create_data_backup, list_data_backups, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, create_planned_task, set_task_plan, update_task, get_task_resume, save_task_resume, set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task,
             list_reminders, list_reminder_events, schedule_reminder, cancel_reminder,
             snooze_reminder, acknowledge_reminder])
         .setup(|app| {
