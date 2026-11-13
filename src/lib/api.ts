@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Note, Task, TaskResume, FocusSession, InboxItem, Reminder, ReminderEvent, ReminderRule } from './types';
+import type { Note, Task, TaskResume, FocusSession, ItemLink, InboxItem, Reminder, ReminderEvent, ReminderRule } from './types';
 
 export const notesApi = {
   list: () => invoke<Note[]>('list_notes'),
@@ -48,6 +48,14 @@ export const focusApi = {
   heartbeat: (id: string) => invoke<FocusSession>('heartbeat_focus_session', { id }),
   stop: (id: string, reason: 'paused' | 'finished', summary: string) =>
     invoke<FocusSession>('stop_focus_session', { id, reason, summary })
+};
+
+export const linksApi = {
+  list: (itemType: ItemLink['item_type'], itemId: string) =>
+    invoke<ItemLink[]>('list_item_links', { itemType, itemId }),
+  add: (fromType: ItemLink['item_type'], fromId: string, toType: ItemLink['item_type'], toId: string) =>
+    invoke<string>('add_item_link', { fromType, fromId, toType, toId }),
+  remove: (id: string) => invoke<void>('remove_item_link', { id })
 };
 
 export const inboxApi = {

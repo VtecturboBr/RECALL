@@ -4,6 +4,7 @@ mod inbox;
 mod reminders;
 mod history;
 mod focus;
+mod links;
 
 use sqlx::SqlitePool;
 use tauri::{Emitter, Manager};
@@ -333,12 +334,38 @@ async fn inbox_to_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle,
     Ok(task)
 }
 
+#[tauri::command]
+async fn list_item_links(
+    state: tauri::State<'_, AppState>, item_type: String, item_id: String,
+) -> Result<Vec<links::ItemLink>, String> {
+    links::list(&state.pool, &item_type, &item_id).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn add_item_link(
+    state: tauri::State<'_, AppState>, app: tauri::AppHandle,
+    from_type: String, from_id: String, to_type: String, to_id: String,
+) -> Result<String, String> {
+    let link_id=links::add(&state.pool, &from_type, &from_id, &to_type, &to_id)
+        .await.map_err(|e| e.to_string())?;
+    let _=app.emit("links:changed", &link_id);
+    Ok(link_id)
+}
+#[tauri::command]
+async fn remove_item_link(
+    state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String,
+) -> Result<(), String> {
+    links::remove(&state.pool, &id).await.map_err(|e| e.to_string())?;
+    let _=app.emit("links:changed", &id);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![list_notes, get_note, create_note, save_note, create_note_copy, create_data_backup, list_data_backups, set_note_pin, set_note_reminder, delete_note, show_capture, capture_note, list_tasks, create_task, create_planned_task, set_task_plan, update_task, get_task_resume, save_task_resume,
             get_active_focus, list_focus_sessions, start_focus_session, heartbeat_focus_session, stop_focus_session,
+            list_item_links, add_item_link, remove_item_link,
             set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task,
             list_reminders, list_reminder_events, schedule_reminder, cancel_reminder,
             snooze_reminder, acknowledge_reminder])

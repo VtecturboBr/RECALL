@@ -94,7 +94,7 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await?;
     let starting_version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await?;
-    if starting_version > 6 {
+    if starting_version > 7 {
         return Err(sqlx::Error::Protocol(
             "Banco de dados criado por versão mais recente do RECALL; atualização necessária".into()
         ));
@@ -113,6 +113,11 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     if starting_version < 6 && existing_user_tables > 0 {
         create_backup(&pool, path, "pre-alpha9").await.map_err(|e|
             sqlx::Error::Protocol(format!("Backup obrigatório pré-Alpha 9 falhou: {e}"))
+        )?;
+    }
+    if starting_version < 7 && existing_user_tables > 0 {
+        create_backup(&pool, path, "pre-alpha9-links").await.map_err(|e|
+            sqlx::Error::Protocol(format!("Backup obrigatório pré-Alpha 9.1 falhou: {e}"))
         )?;
     }
     // On upgrades, the first integrity-schema change is preceded by a verified
@@ -201,6 +206,10 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
         crate::focus::migrate_v6(&pool).await?;
     }
     crate::focus::verify_v6(&pool).await?;
+    if starting_version < 7 {
+        crate::links::migrate_v7(&pool).await?;
+    }
+    crate::links::verify_v7(&pool).await?;
     Ok(pool)
 }
 
@@ -336,9 +345,10 @@ mod integrity_tests {
         assert_eq!(first.title, "Meu texto");
         assert_eq!(first.body, "Preservar");
         let backups = list_backups(&path).unwrap();
-        assert_eq!(backups.len(), 3, "each legacy upgrade needs its own verified snapshot");
+        assert_eq!(backups.len(), 4, "each legacy upgrade needs its own verified snapshot");
         assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha8") && b.size_bytes > 0));
         assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha9") && b.size_bytes > 0));
+        assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha9-links") && b.size_bytes > 0));
         assert!(backups.iter().any(|b| b.file_name.contains("pre-integrity") && b.size_bytes > 0));
 
         let changed = save(&pool, "old", "Revisado", "Conteúdo", 0).await.unwrap().unwrap();

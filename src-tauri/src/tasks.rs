@@ -310,6 +310,7 @@ mod planning_tests {
             sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger}"))
                 .execute(&pool).await.unwrap();
         }
+        sqlx::query("DROP TABLE item_links").execute(&pool).await.unwrap();
         sqlx::query("DROP TABLE focus_sessions").execute(&pool).await.unwrap();
         sqlx::query("DROP TABLE content_history").execute(&pool).await.unwrap();
         sqlx::query("DROP TABLE inbox_dispositions").execute(&pool).await.unwrap();
@@ -321,7 +322,7 @@ mod planning_tests {
         let backups=crate::db::list_backups(&path).unwrap();
         assert!(backups.iter().any(|x| x.file_name.contains("pre-resume")));
         let rev: i64=sqlx::query_scalar("PRAGMA user_version").fetch_one(&reopened).await.unwrap();
-        assert_eq!(rev,6);
+        assert_eq!(rev,7);
         reopened.close().await; let _=std::fs::remove_dir_all(dir);
     }
 
