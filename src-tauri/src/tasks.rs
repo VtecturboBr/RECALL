@@ -138,6 +138,70 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
 #[cfg(test)]
 mod planning_tests {
     use super::valid_plan;
+    fn test_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("recall-task-cas-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn concurrent_edits_reject_stale_task_revision() {
+        let dir = test_dir();
+        let pool = crate::db::connect(&dir.join("memoria.sqlite")).await.unwrap();
+        let task = super::create(&pool, "Original").await.unwrap();
+        let (a,b) = tokio::join!(
+            super::update(&pool, &task.id, "Versão A", "A", None, task.revision),
+            super::update(&pool, &task.id, "Versão B", "B", None, task.revision)
+        );
+        assert_ne!(a.unwrap().is_some(), b.unwrap().is_some());
+        assert_eq!(super::get(&pool, &task.id).await.unwrap().unwrap().revision, 1);
+        // Older binaries bypassing CAS still advance the revision.
+        sqlx::query("UPDATE tasks SET details='Externo' WHERE id=?")
+            .bind(&task.id).execute(&pool).await.unwrap();
+        assert!(super::update(&pool, &task.id, "Stale", "", None, 1).await.unwrap().is_none());
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn task_completion_and_reminder_cancel_roll_back_together() {
+        let dir = test_dir();
+        let pool = crate::db::connect(&dir.join("memoria.sqlite")).await.unwrap();
+        let task = super::create(&pool, "Pagar conta").await.unwrap();
+        crate::reminders::schedule(&pool, "task", &task.id, crate::db::now_ms()+60000, "none").await.unwrap();
+        sqlx::query("CREATE TRIGGER block_cancel BEFORE INSERT ON reminder_events
+            WHEN NEW.kind='cancelled' BEGIN SELECT RAISE(FAIL, 'simulated crash'); END")
+            .execute(&pool).await.unwrap();
+        assert!(super::set_completed(&pool, &task.id, true).await.is_err());
+        assert_eq!(super::get(&pool, &task.id).await.unwrap().unwrap().completed_at, None);
+        assert_eq!(crate::reminders::find(&pool, "task", &task.id).await.unwrap().unwrap().state, "scheduled");
+        sqlx::query("DROP TRIGGER block_cancel").execute(&pool).await.unwrap();
+        let changed = super::set_completed(&pool, &task.id, true).await.unwrap();
+        assert!(changed.completed_at.is_some());
+        let state: String = sqlx::query_scalar("SELECT state FROM reminder_rules WHERE target_type='task' AND target_id=?")
+            .bind(&task.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(state, "cancelled");
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn migrating_existing_task_creates_verified_backup() {
+        let dir = test_dir(); let path=dir.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let task=super::create(&pool, "Legado").await.unwrap();
+        sqlx::query("DROP TRIGGER task_revision_insert").execute(&pool).await.unwrap();
+        sqlx::query("DROP TRIGGER task_revision_edit").execute(&pool).await.unwrap();
+        sqlx::query("DROP TABLE task_revisions").execute(&pool).await.unwrap();
+        pool.close().await;
+        let reopened=crate::db::connect(&path).await.unwrap();
+        assert_eq!(super::get(&reopened, &task.id).await.unwrap().unwrap().title, "Legado");
+        assert!(crate::db::list_backups(&path).unwrap().iter()
+            .any(|x| x.file_name.contains("pre-content-revisions")));
+        reopened.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn accepts_only_valid_bucket_and_schedule() {
         assert!(valid_plan("today", None));
