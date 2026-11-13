@@ -380,7 +380,7 @@
     const value = ideaText;
     ideaDirty = false;
     ideaSaving = true;
-    const write: Promise<boolean> = inboxApi.update(id, value)
+    const write: Promise<boolean> = inboxApi.update(id, value, ideas.find(i => i.id === id)?.revision ?? idea.revision)
       .then(updated => {
         ideas = ideas.map(i => i.id === updated.id ? updated : i);
         return true;
@@ -437,7 +437,7 @@
     const details = taskDetails;
     taskDirty = false;
     taskSaving = true;
-    const write: Promise<boolean> = tasksApi.update(id, title, details, dueAt)
+    const write: Promise<boolean> = tasksApi.update(id, title, details, dueAt, tasks.find(t => t.id === id)?.revision ?? task.revision)
       .then(updated => {
         tasks = tasks.map(t => t.id === updated.id ? updated : t);
         return true;
