@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
-  import { ArrowRight, Check, ChevronDown, ChevronUp, RotateCcw, ShieldAlert } from 'lucide-svelte';
+  import { Check, ChevronDown, ChevronUp, RotateCcw, ShieldAlert } from 'lucide-svelte';
   import { tasksApi, inboxApi } from '../lib/api';
 
   let { taskId, taskTitle }: { taskId: string; taskTitle: string } = $props();
