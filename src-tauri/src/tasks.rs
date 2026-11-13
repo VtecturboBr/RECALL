@@ -138,7 +138,10 @@ pub async fn set_completed(pool: &SqlitePool, id: &str, completed: bool) -> Resu
     let updated = sqlx::query("UPDATE tasks SET completed_at=?,updated_at=? WHERE id=? AND deleted_at IS NULL")
         .bind(at).bind(now_ms()).bind(id).execute(&mut *tx).await?;
     if updated.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
-    if completed { reminders::cancel_in_tx(&mut tx, "task", id).await?; }
+    if completed {
+        reminders::cancel_in_tx(&mut tx, "task", id).await?;
+        crate::focus::finish_task_in_tx(&mut tx, id).await?;
+    }
     tx.commit().await?;
     get(pool, id).await?.ok_or(sqlx::Error::RowNotFound)
 }
@@ -175,6 +178,7 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
         .bind(now).bind(now).bind(id).execute(&mut *tx).await?;
     if updated.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
     reminders::cancel_in_tx(&mut tx, "task", id).await?;
+    crate::focus::finish_task_in_tx(&mut tx, id).await?;
     tx.commit().await
 }
 
