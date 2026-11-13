@@ -217,13 +217,14 @@ mod tests {
         pool.close().await;
         let raw=sqlx::SqlitePool::connect_with(
             sqlx::sqlite::SqliteConnectOptions::new().filename(&path)).await.unwrap();
+        sqlx::query("DROP TABLE item_links").execute(&raw).await.unwrap();
         sqlx::query("DROP TABLE focus_sessions").execute(&raw).await.unwrap();
         sqlx::query("PRAGMA user_version=5").execute(&raw).await.unwrap();
         raw.close().await;
         let upgraded=db::connect(&path).await.unwrap();
         assert_eq!(tasks::get(&upgraded,&task.id).await.unwrap().unwrap().title,"Dados antigos");
         let version:i64=sqlx::query_scalar("PRAGMA user_version").fetch_one(&upgraded).await.unwrap();
-        assert_eq!(version,6);
+        assert_eq!(version,7);
         assert!(db::list_backups(&path).unwrap().iter().any(|x|x.file_name.contains("pre-alpha9")));
         upgraded.close().await;let _=std::fs::remove_dir_all(dir);
     }
@@ -236,6 +237,7 @@ mod tests {
         pool.close().await;
         let raw=sqlx::SqlitePool::connect_with(
             sqlx::sqlite::SqliteConnectOptions::new().filename(&path)).await.unwrap();
+        sqlx::query("DROP TABLE item_links").execute(&raw).await.unwrap();
         sqlx::query("DROP TABLE focus_sessions").execute(&raw).await.unwrap();
         sqlx::query("PRAGMA user_version=5").execute(&raw).await.unwrap();
         sqlx::query("CREATE TABLE focus_sessions(broken INTEGER)").execute(&raw).await.unwrap();
