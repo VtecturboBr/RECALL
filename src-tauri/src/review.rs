@@ -76,7 +76,7 @@ async fn list_at(pool: &SqlitePool, now: i64) -> Result<Vec<ReviewItem>, sqlx::E
          LEFT JOIN task_resumes s ON s.task_id=t.id
          LEFT JOIN focus_sessions f ON f.id=(
             SELECT fs.id FROM focus_sessions fs WHERE fs.task_id=t.id
-            ORDER BY fs.started_at DESC,fs.id DESC LIMIT 1
+            ORDER BY fs.started_at DESC,fs.rowid DESC LIMIT 1
          )
          WHERE t.deleted_at IS NULL AND t.completed_at IS NULL"
     ).fetch_all(pool).await?;
