@@ -1022,7 +1022,7 @@
                 <summary>Histórico recente <ChevronRight size={14}/></summary>
                 <div class="re-history-list">
                   {#each reminderHistory.slice(0,12) as event (event.id)}
-                    <div><span>{event.kind === 'acknowledged' ? 'Resolvido' : event.kind === 'snoozed' ? 'Adiado' : event.kind === 'attention' ? 'Vencido' : event.kind === 'dispatched' ? 'Enviado ao Windows' : event.kind === 'dispatch_failed' ? 'Falha no envio' : event.kind === 'cancelled' ? 'Desativado' : 'Agendado'}</span>
+                    <div><span>{event.kind === 'acknowledged' ? 'Resolvido' : event.kind === 'snoozed' ? 'Adiado' : event.kind === 'attention' ? 'Vencido' : event.kind === 'dispatched' ? 'Enviado ao Windows' : event.kind === 'dispatch_failed' ? 'Falha no envio' : event.kind === 'suppressed' ? 'Agrupado no resumo' : event.kind === 'cancelled' ? 'Desativado' : 'Agendado'}</span>
                       <span>{event.target_type === 'task' ? 'Tarefa' : 'Nota'} · {formatDateTime(event.occurred_at)}</span></div>
                   {/each}
                 </div>
