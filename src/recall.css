@@ -189,7 +189,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .re-entry-empty svg{color:#a47483}
 .re-entry-empty p{margin:12px 0 4px;font-size:13px;color:#dfd4dc}
 .re-entry-empty small{font-size:11px}
-.re-collection-bottom{display:flex;align-items:center;gap:6px;padding:12px 16px;border-top:1px solid #302b33;background:#141216}
+.re-collection-bottom{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:12px 16px;border-top:1px solid #302b33;background:#141216}
 .re-collection-bottom button{display:flex;align-items:center;gap:7px;background:none;border:1px solid #443841;border-radius:7px;padding:9px 10px;color:#cfbdc7;font-size:11px}
 .re-collection-bottom button:hover{background:#2d222b}
 .re-inspector{overflow-y:auto;min-height:0;min-width:0;scrollbar-color:#4e434d transparent;scrollbar-width:thin}

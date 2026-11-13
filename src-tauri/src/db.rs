@@ -248,9 +248,15 @@ pub async fn set_reminder(pool: &SqlitePool, id: &str, remind_at: Option<i64>) -
 }
 
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE notes SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL")
-        .bind(now_ms()).bind(now_ms()).bind(id).execute(pool).await?;
-    Ok(())
+    // Soft-delete and reminder cancellation must commit together. A failure in
+    // the reminder event log must not leave a note silently deleted.
+    let now = now_ms();
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query("UPDATE notes SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL")
+        .bind(now).bind(now).bind(id).execute(&mut *tx).await?;
+    if result.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
+    crate::reminders::cancel_in_tx(&mut tx, "note", id).await?;
+    tx.commit().await
 }
 
 pub async fn due(pool: &SqlitePool) -> Result<Vec<Note>, sqlx::Error> {
@@ -337,6 +343,37 @@ mod integrity_tests {
         assert_eq!(get(&pool, &note.id).await.unwrap().unwrap().revision, 2);
         assert!(save(&pool, &note.id, "Stale", "X", 1).await.unwrap().is_none());
 
+        pool.close().await;
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn delete_note_is_atomic_even_when_cancelling_reminder_fails() {
+        let dir = temporary_dir();
+        let path = dir.join("memoria.sqlite");
+        let pool = connect(&path).await.unwrap();
+        let note = create_copy(&pool, "Important", "Não perder", "note").await.unwrap();
+        crate::reminders::schedule(&pool, "note", &note.id, now_ms() + 3_600_000, "none")
+            .await.unwrap();
+        sqlx::query("CREATE TRIGGER stop_note_cancel BEFORE INSERT ON reminder_events
+            WHEN NEW.kind='cancelled' BEGIN SELECT RAISE(ABORT, 'simulated cancel failure'); END")
+            .execute(&pool).await.unwrap();
+        assert!(delete(&pool, &note.id).await.is_err(), "delete must roll back");
+        let kept = get(&pool, &note.id).await.unwrap().unwrap();
+        assert_eq!(kept.body, "Não perder");
+        let state: String = sqlx::query_scalar("SELECT state FROM reminder_rules WHERE target_type='note' AND target_id=?")
+            .bind(&note.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(state, "scheduled");
+
+        sqlx::query("DROP TRIGGER stop_note_cancel").execute(&pool).await.unwrap();
+        delete(&pool, &note.id).await.unwrap();
+        assert!(get(&pool, &note.id).await.unwrap().is_none());
+        let archived_body: String = sqlx::query_scalar("SELECT body FROM notes WHERE id=?")
+            .bind(&note.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(archived_body, "Não perder", "deletion must be reversible later");
+        let cancelled: String = sqlx::query_scalar("SELECT state FROM reminder_rules WHERE target_type='note' AND target_id=?")
+            .bind(&note.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(cancelled, "cancelled");
         pool.close().await;
         let _ = fs::remove_dir_all(dir);
     }
