@@ -207,6 +207,12 @@
     } catch { /* Invalid/blocked storage must not prevent starting RECALL. */ }
     captureDraftReady = true;
     let alive = true;
+    const narrowViewport = window.matchMedia('(max-width: 680px)');
+    if (narrowViewport.matches) sidebarVisible = false;
+    const onNarrowChange = (event: MediaQueryListEvent) => {
+      if (event.matches) sidebarVisible = false;
+    };
+    narrowViewport.addEventListener('change', onNarrowChange);
     const dayClock = setInterval(() => { clock = new Date(); }, 60_000);
     const unlisteners: Array<() => void> = [];
     void refresh();
@@ -224,7 +230,10 @@
       if (event.ctrlKey && event.key.toLowerCase() === 'n') {
         event.preventDefault(); void captureWindow();
       }
-      if (event.key === 'Escape') presenting = false;
+      if (event.key === 'Escape') {
+        presenting = false;
+        if (narrowViewport.matches) sidebarVisible = false;
+      }
       if (presenting && event.key === 'ArrowRight') slideIndex = Math.min(slideIndex + 1, slides.length - 1);
       if (presenting && event.key === 'ArrowLeft') slideIndex = Math.max(slideIndex - 1, 0);
     };
@@ -232,6 +241,7 @@
     return () => {
       alive = false;
       clearInterval(dayClock);
+      narrowViewport.removeEventListener('change', onNarrowChange);
       unlisteners.forEach(fn => fn());
       window.removeEventListener('keydown', onKey);
       if (saveTimer) clearTimeout(saveTimer);
@@ -821,6 +831,7 @@
 <svelte:head><title>RECALL — seu espaço de clareza</title></svelte:head>
 
 <div class="re-app" class:re-collapsed={!sidebarVisible}>
+  <button type="button" class="re-sidebar-backdrop" aria-label="Fechar menu lateral" onclick={() => sidebarVisible = false}></button>
   <aside class="re-sidebar" aria-label="Navegação do RECALL">
     <div class="re-brand">
       <div class="re-brand-mark" aria-hidden="true"><BrainCircuit size={22} strokeWidth={1.8}/></div>
