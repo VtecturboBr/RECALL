@@ -1,7 +1,7 @@
 use serde::Serialize;
 use sqlx::{FromRow, SqlitePool};
 use uuid::Uuid;
-use crate::db::now_ms;
+use crate::{db::now_ms, reminders};
 
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct Task {
@@ -15,9 +15,10 @@ pub struct Task {
     pub created_at: i64,
     pub updated_at: i64,
     pub deleted_at: Option<i64>,
+    pub revision: i64,
 }
 
-const FIELDS: &str = "t.id,t.title,t.details,t.due_at,t.completed_at,t.created_at,t.updated_at,t.deleted_at,COALESCE(p.bucket,'today') AS bucket,p.planned_for";
+const FIELDS: &str = "t.id,t.title,t.details,t.due_at,t.completed_at,t.created_at,t.updated_at,t.deleted_at,COALESCE(p.bucket,'today') AS bucket,p.planned_for,COALESCE(v.revision,0) AS revision";
 
 pub async fn initialize(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query("CREATE TABLE IF NOT EXISTS tasks (
@@ -40,6 +41,16 @@ pub async fn initialize(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )").execute(pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_task_plans_bucket ON task_plans(bucket,planned_for)")
         .execute(pool).await?;
+    // Trigger detects edits made by older application versions as well.
+    sqlx::query("CREATE TABLE IF NOT EXISTS task_revisions (
+        task_id TEXT PRIMARY KEY NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0)
+    )").execute(pool).await?;
+    sqlx::query("INSERT OR IGNORE INTO task_revisions(task_id,revision) SELECT id,0 FROM tasks").execute(pool).await?;
+    sqlx::query("CREATE TRIGGER IF NOT EXISTS task_revision_insert AFTER INSERT ON tasks
+        BEGIN INSERT OR IGNORE INTO task_revisions(task_id,revision) VALUES(NEW.id,0); END").execute(pool).await?;
+    sqlx::query("CREATE TRIGGER IF NOT EXISTS task_revision_edit AFTER UPDATE OF title,details,due_at,completed_at,deleted_at ON tasks
+        BEGIN UPDATE task_revisions SET revision=revision+1 WHERE task_id=NEW.id; END").execute(pool).await?;
     Ok(())
 }
 
@@ -78,13 +89,13 @@ pub async fn set_plan(pool: &SqlitePool, id: &str, bucket: &str, planned_for: Op
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Task>, sqlx::Error> {
-    sqlx::query_as::<_, Task>(&format!("SELECT {FIELDS} FROM tasks t LEFT JOIN task_plans p ON p.task_id=t.id WHERE t.deleted_at IS NULL
+    sqlx::query_as::<_, Task>(&format!("SELECT {FIELDS} FROM tasks t LEFT JOIN task_plans p ON p.task_id=t.id LEFT JOIN task_revisions v ON v.task_id=t.id WHERE t.deleted_at IS NULL
         ORDER BY (t.completed_at IS NOT NULL), (t.due_at IS NULL), t.due_at, t.updated_at DESC"))
         .fetch_all(pool).await
 }
 
 pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<Task>, sqlx::Error> {
-    sqlx::query_as::<_, Task>(&format!("SELECT {FIELDS} FROM tasks t LEFT JOIN task_plans p ON p.task_id=t.id WHERE t.id=? AND t.deleted_at IS NULL"))
+    sqlx::query_as::<_, Task>(&format!("SELECT {FIELDS} FROM tasks t LEFT JOIN task_plans p ON p.task_id=t.id LEFT JOIN task_revisions v ON v.task_id=t.id WHERE t.id=? AND t.deleted_at IS NULL"))
         .bind(id).fetch_optional(pool).await
 }
 
@@ -96,18 +107,22 @@ pub async fn create(pool: &SqlitePool, title: &str) -> Result<Task, sqlx::Error>
     get(pool, &id).await?.ok_or(sqlx::Error::RowNotFound)
 }
 
-pub async fn update(pool: &SqlitePool, id: &str, title: &str, details: &str, due_at: Option<i64>) -> Result<Task, sqlx::Error> {
-    let updated = sqlx::query("UPDATE tasks SET title=?,details=?,due_at=?,updated_at=? WHERE id=? AND deleted_at IS NULL")
-        .bind(title.trim()).bind(details).bind(due_at).bind(now_ms()).bind(id).execute(pool).await?;
-    if updated.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
-    get(pool, id).await?.ok_or(sqlx::Error::RowNotFound)
+pub async fn update(pool: &SqlitePool, id: &str, title: &str, details: &str, due_at: Option<i64>, expected_revision: i64) -> Result<Option<Task>, sqlx::Error> {
+    let updated = sqlx::query("UPDATE tasks SET title=?,details=?,due_at=?,updated_at=? WHERE id=? AND deleted_at IS NULL
+        AND EXISTS(SELECT 1 FROM task_revisions WHERE task_id=tasks.id AND revision=?)")
+        .bind(title.trim()).bind(details).bind(due_at).bind(now_ms()).bind(id).bind(expected_revision).execute(pool).await?;
+    if updated.rows_affected() == 0 { return Ok(None); }
+    get(pool, id).await
 }
 
 pub async fn set_completed(pool: &SqlitePool, id: &str, completed: bool) -> Result<Task, sqlx::Error> {
     let at = if completed { Some(now_ms()) } else { None };
+    let mut tx = pool.begin().await?;
     let updated = sqlx::query("UPDATE tasks SET completed_at=?,updated_at=? WHERE id=? AND deleted_at IS NULL")
-        .bind(at).bind(now_ms()).bind(id).execute(pool).await?;
+        .bind(at).bind(now_ms()).bind(id).execute(&mut *tx).await?;
     if updated.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
+    if completed { reminders::cancel_in_tx(&mut tx, "task", id).await?; }
+    tx.commit().await?;
     get(pool, id).await?.ok_or(sqlx::Error::RowNotFound)
 }
 
@@ -123,6 +138,70 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
 #[cfg(test)]
 mod planning_tests {
     use super::valid_plan;
+    fn test_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("recall-task-cas-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn concurrent_edits_reject_stale_task_revision() {
+        let dir = test_dir();
+        let pool = crate::db::connect(&dir.join("memoria.sqlite")).await.unwrap();
+        let task = super::create(&pool, "Original").await.unwrap();
+        let (a,b) = tokio::join!(
+            super::update(&pool, &task.id, "Versão A", "A", None, task.revision),
+            super::update(&pool, &task.id, "Versão B", "B", None, task.revision)
+        );
+        assert_ne!(a.unwrap().is_some(), b.unwrap().is_some());
+        assert_eq!(super::get(&pool, &task.id).await.unwrap().unwrap().revision, 1);
+        // Older binaries bypassing CAS still advance the revision.
+        sqlx::query("UPDATE tasks SET details='Externo' WHERE id=?")
+            .bind(&task.id).execute(&pool).await.unwrap();
+        assert!(super::update(&pool, &task.id, "Stale", "", None, 1).await.unwrap().is_none());
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn task_completion_and_reminder_cancel_roll_back_together() {
+        let dir = test_dir();
+        let pool = crate::db::connect(&dir.join("memoria.sqlite")).await.unwrap();
+        let task = super::create(&pool, "Pagar conta").await.unwrap();
+        crate::reminders::schedule(&pool, "task", &task.id, crate::db::now_ms()+60000, "none").await.unwrap();
+        sqlx::query("CREATE TRIGGER block_cancel BEFORE INSERT ON reminder_events
+            WHEN NEW.kind='cancelled' BEGIN SELECT RAISE(FAIL, 'simulated crash'); END")
+            .execute(&pool).await.unwrap();
+        assert!(super::set_completed(&pool, &task.id, true).await.is_err());
+        assert_eq!(super::get(&pool, &task.id).await.unwrap().unwrap().completed_at, None);
+        assert_eq!(crate::reminders::find(&pool, "task", &task.id).await.unwrap().unwrap().state, "scheduled");
+        sqlx::query("DROP TRIGGER block_cancel").execute(&pool).await.unwrap();
+        let changed = super::set_completed(&pool, &task.id, true).await.unwrap();
+        assert!(changed.completed_at.is_some());
+        let state: String = sqlx::query_scalar("SELECT state FROM reminder_rules WHERE target_type='task' AND target_id=?")
+            .bind(&task.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(state, "cancelled");
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn migrating_existing_task_creates_verified_backup() {
+        let dir = test_dir(); let path=dir.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let task=super::create(&pool, "Legado").await.unwrap();
+        sqlx::query("DROP TRIGGER task_revision_insert").execute(&pool).await.unwrap();
+        sqlx::query("DROP TRIGGER task_revision_edit").execute(&pool).await.unwrap();
+        sqlx::query("DROP TABLE task_revisions").execute(&pool).await.unwrap();
+        pool.close().await;
+        let reopened=crate::db::connect(&path).await.unwrap();
+        assert_eq!(super::get(&reopened, &task.id).await.unwrap().unwrap().title, "Legado");
+        assert!(crate::db::list_backups(&path).unwrap().iter()
+            .any(|x| x.file_name.contains("pre-content-revisions")));
+        reopened.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn accepts_only_valid_bucket_and_schedule() {
         assert!(valid_plan("today", None));

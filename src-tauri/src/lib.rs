@@ -124,19 +124,18 @@ async fn create_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, t
     Ok(task)
 }
 #[tauri::command]
-async fn update_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, title: String, details: String, due_at: Option<i64>) -> Result<tasks::Task, String> {
+async fn update_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, title: String, details: String, due_at: Option<i64>, expected_revision: i64) -> Result<tasks::Task, String> {
     if title.trim().is_empty() || title.chars().count() > 250 || details.chars().count() > 100_000 { return Err("Tarefa inválida".into()); }
-    let task = tasks::update(&state.pool, &id, &title, &details, due_at).await.map_err(|e| e.to_string())?;
+    if expected_revision < 0 { return Err("Revisão inválida".into()); }
+    let task = tasks::update(&state.pool, &id, &title, &details, due_at, expected_revision).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "CONFLITO_REVISAO: A tarefa mudou em outra janela. Salve uma cópia para preservar ambas as versões.".to_string())?;
     let _ = app.emit("tasks:changed", &id);
     Ok(task)
 }
 #[tauri::command]
 async fn set_task_completed(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, completed: bool) -> Result<tasks::Task, String> {
     let task = tasks::set_completed(&state.pool, &id, completed).await.map_err(|e| e.to_string())?;
-    if completed {
-        reminders::complete_task(&state.pool, &id).await.map_err(|e| e.to_string())?;
-        let _ = app.emit("reminders:changed", &id);
-    }
+    if completed { let _ = app.emit("reminders:changed", &id); }
     let _ = app.emit("tasks:changed", &id);
     Ok(task)
 }
@@ -249,9 +248,11 @@ async fn capture_inbox(state: tauri::State<'_, AppState>, app: tauri::AppHandle,
     Ok(item)
 }
 #[tauri::command]
-async fn update_inbox(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, text: String) -> Result<inbox::InboxItem, String> {
+async fn update_inbox(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, text: String, expected_revision: i64) -> Result<inbox::InboxItem, String> {
     if text.trim().is_empty() || text.chars().count() > 100_000 { return Err("Escreva uma ideia válida".into()); }
-    let item = inbox::update(&state.pool, &id, &text).await.map_err(|e| e.to_string())?;
+    if expected_revision < 0 { return Err("Revisão inválida".into()); }
+    let item = inbox::update(&state.pool, &id, &text, expected_revision).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "CONFLITO_REVISAO: A ideia mudou em outra janela. Salve uma cópia para preservar ambas as versões.".to_string())?;
     let _ = app.emit("inbox:changed", &id);
     Ok(item)
 }

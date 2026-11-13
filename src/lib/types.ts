@@ -24,6 +24,7 @@ export interface Task {
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
+  revision: number;
 }
 
 export interface InboxItem {
@@ -32,6 +33,7 @@ export interface InboxItem {
   created_at: number;
   updated_at: number;
   processed_at: number | null;
+  revision: number;
 }
 
 export type ReminderRule = 'none' | 'daily' | 'weekly' | 'monthly';

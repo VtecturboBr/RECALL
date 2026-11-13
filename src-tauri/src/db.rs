@@ -113,6 +113,17 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
                 .map_err(|e| sqlx::Error::Protocol(format!("Backup pré-lembretes falhou: {e}")))?;
         }
     }
+    // Back up existing user content before adding task/idea revision tables.
+    let needs_content_revisions: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('tasks','inbox_items')"
+    ).fetch_one(&pool).await?;
+    let present_content_revisions: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('task_revisions','inbox_revisions')"
+    ).fetch_one(&pool).await?;
+    if needs_content_revisions > 0 && present_content_revisions < 2 {
+        create_backup(&pool, path, "pre-content-revisions").await
+            .map_err(|e| sqlx::Error::Protocol(format!("Backup pré-revisões de tarefas e ideias falhou: {e}")))?;
+    }
     sqlx::query("CREATE TABLE IF NOT EXISTS notes (
         id TEXT PRIMARY KEY NOT NULL,
         title TEXT NOT NULL DEFAULT '',
@@ -148,7 +159,7 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     crate::inbox::initialize(&pool).await?;
     crate::reminders::initialize(&pool).await?;
     let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await?;
-    if version < 2 { sqlx::query("PRAGMA user_version = 2").execute(&pool).await?; }
+    if version < 3 { sqlx::query("PRAGMA user_version = 3").execute(&pool).await?; }
     Ok(pool)
 }
 

@@ -32,8 +32,8 @@ export const tasksApi = {
     invoke<Task>('create_planned_task', { title, details, bucket, plannedFor, dueAt }),
   plan: (id: string, bucket: Task['bucket'], plannedFor: number | null) =>
     invoke<Task>('set_task_plan', { id, bucket, plannedFor }),
-  update: (id: string, title: string, details: string, dueAt: number | null) =>
-    invoke<Task>('update_task', { id, title, details, dueAt }),
+  update: (id: string, title: string, details: string, dueAt: number | null, expectedRevision: number) =>
+    invoke<Task>('update_task', { id, title, details, dueAt, expectedRevision }),
   complete: (id: string, completed: boolean) => invoke<Task>('set_task_completed', { id, completed }),
   delete: (id: string) => invoke<void>('delete_task', { id })
 };
@@ -41,7 +41,8 @@ export const tasksApi = {
 export const inboxApi = {
   list: () => invoke<InboxItem[]>('list_inbox'),
   capture: (text: string) => invoke<InboxItem>('capture_inbox', { text }),
-  update: (id: string, text: string) => invoke<InboxItem>('update_inbox', { id, text }),
+  update: (id: string, text: string, expectedRevision: number) =>
+    invoke<InboxItem>('update_inbox', { id, text, expectedRevision }),
   dismiss: (id: string) => invoke<void>('dismiss_inbox', { id }),
   toNote: (id: string) => invoke<Note>('inbox_to_note', { id }),
   toTask: (id: string) => invoke<Task>('inbox_to_task', { id })
