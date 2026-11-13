@@ -1,85 +1,67 @@
-# RECALL
+# RECALL — sua memória externa
 
-**Sua memória externa — notas, lembretes e foco para Windows.**
+Aplicativo **offline para Windows** com notas, tarefas, apresentações, ideias, lembretes, sessões de foco e pontos de retomada. Construído com **Svelte 5, TypeScript, Tauri 2, Rust e SQLite**.
 
-**Versão principal:** v0.4. **Em desenvolvimento na branch `feature/v0.5`:** v0.5 alpha 1. Interface minimalista preta e vermelha.
+> **Estado atual:** versão de testes **0.5.0-alpha.9.2.1** na branch `fix/alpha9-2-1-integridade-estabilidade` (PR #21). A `main` ainda não recebeu essa Alpha. **Não use um banco real sem cópia de segurança**; teste em um usuário Windows separado, se possível. Não é uma versão estável.
 
-> **Estado atual:** o código-fonte ainda não foi validado como executável Windows. Lembretes dependem de o aplicativo estar em execução. A sincronização Android não foi implementada.
+## Funcionalidades nesta Alpha
 
-## Novidades da v0.5 alpha 1
+- **Agora:** tarefas de hoje, Captura, Modo Foco 2.0 e Revisão Diária sob demanda.
+- **Arquivo:** notas, apresentações, ideias, tarefas, busca e organização por período.
+- **Onde parei?:** contexto e próximo passo por tarefa, com controle de revisões e rascunhos.
+- **Informações conectadas:** links bidirecionais entre notas, tarefas e ideias.
+- **Lembretes 2.0:** recorrência, adiamento, recuperação de vencidos e histórico de eventos.
+- **Notas flutuantes e Captura Rápida:** acesso no Windows, inclusive pela bandeja/atalho quando disponível.
+- **Proteção de dados:** SQLite WAL, transações, exclusão lógica, backups verificados e detecção de conflitos entre editores.
 
-- **Hoje:** crie, edite e conclua tarefas, destacando uma atividade por vez.
-- **Entrada:** capture ideias sem precisar organizá-las na hora.
-- **Converter:** transforme ideias da Entrada em notas ou tarefas; conversão segura no SQLite.
-- **Captura rápida:** Ctrl + Shift + Espaço salva ideias na Entrada.
-- **Compatibilidade:** novas tabelas SQLite sem remover anotações antigas.
+As notificações dependem do RECALL em execução. Ao desligar o PC ou encerrar o processo, nenhuma notificação nativa é enviada durante esse período; os lembretes vencidos voltam para a central de atenção ao abrir o app.
 
-O campo opcional de data das tarefas ainda não gera notificações. Os lembretes existentes da v0.4 continuam vinculados a notas.
+## Alpha 9.2.1 — estabilidade
 
-**A prévia TESTAR_AGORA.html ainda é da v0.4.** Para ver as telas novas, execute o aplicativo Tauri no Windows.
+Corrige problemas identificados na auditoria da Alpha 9.2, principalmente:
+- Texto digitado durante a Captura Rápida não é apagado por um salvamento anterior; tarefas sem título recebem `Nova tarefa`.
+- Modo Foco possui heartbeat nativo independente da aba e controle de sessão ativa mesmo para tarefas fora de Hoje.
+- Concluir ou excluir uma tarefa com sessão em andamento preserva o resumo de foco dentro da mesma transação.
+- A Revisão Diária carrega mais candidatos ao ocultar sugestões.
+- Links consultam itens válidos **antes** do limite e preservam relações quando uma ideia é convertida.
+- Backups podem ser gerados em conflito editorial, deixando explícito que rascunhos não salvos não fazem parte do backup SQLite.
+- O restaurador valida estrutura e versão, detecta interrupção e evita criação silenciosa de um banco vazio.
+- Rascunhos de janelas concorrentes recebem proteção contra exclusão acidental.
 
-## Recursos da v0.4
+Veja [a auditoria original](docs/ALPHA9_2_REVISAO_DIARIA.md) e [a documentação da correção](docs/ALPHA9_2_1_ESTABILIDADE.md).
 
-- Notas locais com SQLite e salvamento automático.
-- Captura rápida: `Ctrl + Shift + Espaço` enquanto o aplicativo está ativo na bandeja.
-- Cartões flutuantes, fixação, pesquisa, foco e cartões de apresentação.
-- Lembretes locais com o processo em execução.
-- Prévia independente em `TESTAR_AGORA.html`, com armazenamento separado no navegador.
+## Baixar e testar no Windows
 
-## Instalador automático para Windows
+1. Feche completamente o RECALL pelo menu da bandeja.
+2. Faça uma **cópia integral** de `%APPDATA%\app.memoriaexterna.desktop`, incluindo `memoria.sqlite`, backups e eventuais arquivos `-wal`/`-shm`. Nunca apague WAL/SHM manualmente.
+3. No [GitHub Actions](https://github.com/VtecturboBr/RECALL/actions), abra a execução **Gerar instalador RECALL Windows** da branch `fix/alpha9-2-1-integridade-estabilidade`.
+4. Quando o workflow indicar **Success**, baixe o ZIP `RECALL-v0.5-alpha9-2-1-estabilidade-Windows-x64`; confirme o `SHA256SUMS.txt` e instale o `.exe` NSIS.
+5. Teste todas as funcionalidades em um **banco de teste**, não no único original.
 
-A branch feature/v0.5 gera um **instalador Windows x64 (NSIS)** no GitHub Actions, sem exigir Rust ou Node.js no seu computador. Veja [como baixar e instalar](docs/INSTALADOR_WINDOWS.md). É uma **versão alpha** sem assinatura digital, ainda dependente de testes manuais.
+A versão Alpha 9.2.1 inclui as Alphas anteriores da sequência. Você não precisa reinstalar a 7/8/9.0/9.1 para testar. Como o banco está no schema SQLite v7, **não tente abri-lo em builds antigas**.
 
-## Executar no Windows
+## Desenvolver
 
-Instale [Node.js LTS](https://nodejs.org/), [Rust](https://rustup.rs/) e os [pré-requisitos do Tauri no Windows](https://v2.tauri.app/start/prerequisites/) (incluindo MSVC Build Tools e WebView2).
+Pré-requisitos: Node.js 22, Rust estável, MSVC Build Tools e WebView2 no Windows ([guia do Tauri 2](https://v2.tauri.app/start/prerequisites/)).
 
 ```powershell
 npm install
 npm run check
+npm run test:unit
 npm run desktop
+cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Alternativamente, utilize `INICIAR_WINDOWS.bat`. Para gerar o instalador:
+- Interface: `src/components/RecallStudio.svelte`, `src/components/FocusSession.svelte`, `src/components/DailyReview.svelte`.
+- Dados/IPC: `src-tauri/src/db.rs`, `tasks.rs`, `focus.rs`, `links.rs`, `reminders.rs`, `review.rs`, `lib.rs`.
+- Testes: `tests/`, `scripts/test_restore_backup.py` e testes Rust nos módulos.
+- Instalador: `.github/workflows/windows-installer.yml`.
+- Planejamento e histórico: `docs/`, `AGENTS.md`, `config/ai-workflow.yaml`.
 
-```powershell
-npm run installer
-```
+Componentes antigos `Main.svelte`, `Simplified.svelte`, `Today.svelte` e `Inbox.svelte` permanecem como legado não montado. Não remover folhas de estilo sem checagem visual do instalador.
 
-**Privacidade:** não publique bases de dados pessoais, notas reais, arquivos `.env` ou backups. O `.gitignore` impede o versionamento acidental dos formatos comuns de banco SQLite e de arquivos de configuração sensíveis.
+## Limitações e segurança
 
-## Estrutura do projeto
+Ainda **não há** sincronização Android, conta na nuvem, IA paga, lixeira visual ou restauração de histórico pelo aplicativo. O backup manual protege **somente alterações já persistidas no SQLite**; cópias locais de rascunhos exigem recuperação separada. Não publique bancos, backups nem dados pessoais no GitHub.
 
-- `src/`: interface Svelte e TypeScript.
-- `src-tauri/`: aplicativo Rust/Tauri e banco SQLite.
-- `TESTAR_AGORA.html`: prévia executada no navegador.
-- `.github/workflows/ci.yml`: verificação automatizada para Windows, com execução verificada no GitHub.
-- `docs/`: identidade visual, testes e histórico.
-
-## Próxima versão
-
-O desenvolvimento da v0.5 ocorre na branch `feature/v0.5` e no PR #1, sem alterar a versão principal antes de revisão. O plano está em `docs/ROADMAP_V0.5.md`.
-
-## Validação
-
-O código foi importado de uma versão experimental. O GitHub Actions aprovou Svelte, TypeScript e cargo check no Windows, mas notificações, bandeja, atalho global e instalador ainda precisam de testes interativos no Windows. Não considere a v0.4 uma versão de produção.
-
-## Workflow da nova fase (IA e Codex)
-
-- [AGENTS.md](AGENTS.md): regras para agentes e continuidade.
-- [Workflow](docs/AI_WORKFLOW.md), [skills](docs/AI_SKILLS.md) e [checkpoint](docs/AI_CHECKPOINT.md): decisões, estado verificado e próximos passos.
-- [Configuração portátil](config/ai-workflow.yaml): preferências confirmadas.
-
-A configuração não instala skills e não confirma testes em Windows real; consulte o checkpoint antes de agir.
-
-## Alpha 4.1 — integridade de dados (branch experimental)
-
-A branch \`feature/v0.5-alpha4-integridade\` adiciona revisão de notas, detecção de conflitos entre janelas, rascunhos recuperáveis, snapshots SQLite seguros e roteiro de restauração offline. Veja [guia de proteção e testes](docs/INTEGRIDADE_ALPHA4_1.md). Não altera a \`main\`; validação Windows real ainda é necessária.
-
-## Alpha 5 — Lembretes 2.0 (experimental)
-
-Lembretes persistentes para notas e tarefas, recorrência, adiamento e histórico no próprio SQLite. A organização Agora/Arquivo é preservada. Consulte [o guia Alpha 5](docs/LEMBRETES_2_ALPHA5.md). PR separado sobre a Alpha 4.1, ainda sem merge na main.
-
-## Alpha 6 — Interface redesenhada (branch experimental)
-
-Refatoração visual completa: navegação, foco, Arquivo, editores, captura, lembretes e cartões flutuantes, preservando a base de dados e os comandos nativos. Veja [REDESIGN_ALPHA6.md](docs/REDESIGN_ALPHA6.md).
+**Fluxo GitHub:** as funcionalidades são implementadas em branches e PRs empilhados. Não realizar merge na `main` sem aprovação explícita.
