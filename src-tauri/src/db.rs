@@ -87,6 +87,22 @@ pub fn list_backups(db_path: &Path) -> Result<Vec<BackupInfo>, String> {
 
 
 pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
+    // An interrupted offline restore can strand the old DB as
+    // .recall-original-*.sqlite. Never silently create a blank database over it.
+    if !path.exists() {
+        if let Some(folder) = path.parent() {
+            for entry in fs::read_dir(folder)
+                .map_err(|e| sqlx::Error::Protocol(format!("Falha ao verificar arquivos de restauração: {e}")))? {
+                let entry = entry.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(".recall-original-") && name.ends_with(".sqlite") {
+                    return Err(sqlx::Error::Protocol(
+                        "Restauração interrompida encontrada. O banco antigo foi preservado; execute o recuperador offline antes de iniciar o RECALL.".into()
+                    ));
+                }
+            }
+        }
+    }
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
@@ -321,6 +337,19 @@ mod integrity_tests {
         let dir = std::env::temp_dir().join(format!("recall-integrity-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[tokio::test]
+    async fn stranded_restore_original_blocks_blank_database_creation() {
+        let dir=temporary_dir();
+        let path=dir.join("memoria.sqlite");
+        let original=dir.join(".recall-original-crash.sqlite");
+        fs::write(&original,b"SQLite safety sentinel").unwrap();
+        let result=connect(&path).await;
+        assert!(result.is_err());
+        assert!(!path.exists(),"must not silently create empty DB after interrupted restore");
+        assert!(original.exists(),"must never discard stranded original");
+        let _=fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
