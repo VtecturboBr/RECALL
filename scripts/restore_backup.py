@@ -56,6 +56,32 @@ def verify_database(path: Path) -> dict[str, int]:
             )}
             if "notes" not in tables:
                 raise RestoreError("Este arquivo não contém a tabela notes do RECALL.")
+            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            if not 0 <= version <= 7:
+                raise RestoreError(
+                    f"Versão SQLite RECALL não compatível: v{version}. "
+                    "Não restaure bancos de uma versão futura."
+                )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(notes)")}
+            required = {"id", "title", "body", "kind", "created_at", "updated_at", "deleted_at"}
+            if not required.issubset(columns):
+                raise RestoreError(
+                    "O backup não possui todas as colunas essenciais de notas do RECALL."
+                )
+            required_by_version = {
+                4: {"tasks", "inbox_items", "task_resumes"},
+                5: {"content_history", "inbox_dispositions"},
+                6: {"focus_sessions"},
+                7: {"item_links"},
+            }
+            for schema_version, required_tables in required_by_version.items():
+                if version >= schema_version and not required_tables.issubset(tables):
+                    raise RestoreError(
+                        f"O backup v{version} está incompleto para v{schema_version}: "
+                        f"{', '.join(sorted(required_tables - tables))}"
+                    )
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise RestoreError("O backup contém referências SQLite inconsistentes.")
             counts: dict[str, int] = {}
             for name in ("notes", "tasks", "inbox_items"):
                 if name in tables:
