@@ -119,6 +119,25 @@ pub async fn to_task(pool: &SqlitePool, id: &str) -> Result<Task, sqlx::Error> {
 #[cfg(test)]
 mod tests {
     use super::split_capture;
+    #[tokio::test]
+    async fn simultaneous_idea_edits_preserve_first_write() {
+        let dir = std::env::temp_dir().join(format!("recall-idea-cas-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pool = crate::db::connect(&dir.join("memoria.sqlite")).await.unwrap();
+        let idea = super::capture(&pool, "Primeira versão").await.unwrap();
+        let (a,b) = tokio::join!(
+            super::update(&pool, &idea.id, "Texto A", idea.revision),
+            super::update(&pool, &idea.id, "Texto B", idea.revision)
+        );
+        assert_ne!(a.unwrap().is_some(), b.unwrap().is_some());
+        assert_eq!(super::get(&pool, &idea.id).await.unwrap().unwrap().revision, 1);
+        sqlx::query("UPDATE inbox_items SET text='Edição externa' WHERE id=?")
+            .bind(&idea.id).execute(&pool).await.unwrap();
+        assert!(super::update(&pool, &idea.id, "Obsoleto", 1).await.unwrap().is_none());
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test] fn converts_first_line_to_title() {
         assert_eq!(split_capture("Revisar slides\nAntes de dormir"), ("Revisar slides".into(), "Antes de dormir".into()));
     }
