@@ -38,9 +38,6 @@
   let clock = $state(new Date());
   let archiveFilter = $state<'all' | 'note' | 'task' | 'idea'>('all');
   let archivePeriod = $state<'all' | 'today' | 'later' | 'someday'>('all');
-  let visibleEntries = $derived(matches.filter(item =>
-    archivePeriod === 'all' || (item.type === 'task' && taskPeriod(item.task, clock) === archivePeriod)
-  ));
   let openTaskCount = $derived(tasks.filter(t => t.deleted_at === null && t.completed_at === null).length);
   let dateHeading = $derived(new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(clock));
   const FOCUS_KEY = 'recall-selected-focus-task-v1';
@@ -87,6 +84,9 @@
   let entries = $derived(buildWorkspace(notes, tasks, ideas));
   let selected = $derived(entries.find(item => item.key === selectedKey) ?? null);
   let matches = $derived(searchWorkspace(entries, search, archiveFilter));
+  let visibleEntries = $derived(matches.filter(item =>
+    archivePeriod === 'all' || (item.type === 'task' && taskPeriod(item.task, clock) === archivePeriod)
+  ));
   let todayTasks = $derived(tasksByPeriod(tasks, 'today', clock));
   let laterTasks = $derived(tasksByPeriod(tasks, 'later', clock));
   let somedayTasks = $derived(tasksByPeriod(tasks, 'someday', clock));
