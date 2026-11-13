@@ -74,9 +74,10 @@
         JSON.stringify({title:noteTitle,body:noteBody,revision:noteRevision}));
     } catch { /* Database save remains authoritative; storage may be full. */ }
   }
-  function discardLocalDraft(id: string) {
-    try { localStorage.removeItem(draftKey(id)); } catch { /* Storage unavailable. */ }
+  function discardLocalDraftByKey(key: string) {
+    try { localStorage.removeItem(key); } catch { /* Storage unavailable. */ }
   }
+  function discardLocalDraft(id: string) { discardLocalDraftByKey(draftKey(id)); }
   let noteSaving = $state(false);
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let saveInFlight: Promise<boolean> | null = null;
@@ -84,6 +85,15 @@
   let ideaText = $state('');
   let ideaDirty = $state(false);
   let ideaSaving = $state(false);
+  let ideaConflict = $state(false);
+  let ideaRevision = $state(0);
+  let draftIdeaId: string | null = null;
+  function ideaDraftKey(id: string) { return 'recall-idea-draft:' + id; }
+  function preserveIdeaDraft() {
+    if (!draftIdeaId) return;
+    try { localStorage.setItem(ideaDraftKey(draftIdeaId), JSON.stringify({ text: ideaText, revision: ideaRevision })); }
+    catch { /* Writing to SQLite remains authoritative. */ }
+  }
   let ideaSaveTimer: ReturnType<typeof setTimeout> | undefined;
   let ideaSaveInFlight: Promise<boolean> | null = null;
 
@@ -92,6 +102,16 @@
   let taskDue = $state('');
   let taskDirty = $state(false);
   let taskSaving = $state(false);
+  let taskConflict = $state(false);
+  let taskRevision = $state(0);
+  let draftTaskId: string | null = null;
+  function taskDraftKey(id: string) { return 'recall-task-draft:' + id; }
+  function preserveTaskDraft() {
+    if (!draftTaskId) return;
+    try { localStorage.setItem(taskDraftKey(draftTaskId), JSON.stringify({
+      title: taskTitle, details: taskDetails, due: taskDue, revision: taskRevision
+    })); } catch { /* Writing to SQLite remains authoritative. */ }
+  }
   let taskSaveTimer: ReturnType<typeof setTimeout> | undefined;
   let taskSaveInFlight: Promise<boolean> | null = null;
   let presenting = $state(false);
@@ -310,15 +330,49 @@
       noteDirty = false;
       noteConflict = false;
     }
+    draftIdeaId = entry?.type === 'idea' ? entry.idea.id : null;
+    draftTaskId = entry?.type === 'task' ? entry.task.id : null;
+    ideaConflict = false;
+    taskConflict = false;
     if (entry?.type === 'idea') {
       ideaText = entry.idea.text;
+      ideaRevision = entry.idea.revision;
       ideaDirty = false;
+      try {
+        const cached = localStorage.getItem(ideaDraftKey(entry.idea.id));
+        if (cached) {
+          const draft = JSON.parse(cached) as { text?: unknown; revision?: unknown };
+          if (typeof draft.text === 'string' && draft.text !== entry.idea.text) {
+            ideaText = draft.text;
+            ideaRevision = typeof draft.revision === 'number' ? draft.revision : entry.idea.revision;
+            ideaDirty = true;
+            error = 'Rascunho da ideia recuperado. Confira as alterações.';
+          } else if (draft.text === entry.idea.text) discardLocalDraftByKey(ideaDraftKey(entry.idea.id));
+        }
+      } catch { /* Keep unreadable cache unchanged for manual recovery. */ }
     }
     if (entry?.type === 'task') {
       taskTitle = entry.task.title;
       taskDetails = entry.task.details;
       taskDue = toLocalInput(entry.task.due_at);
+      taskRevision = entry.task.revision;
       taskDirty = false;
+      try {
+        const cached = localStorage.getItem(taskDraftKey(entry.task.id));
+        if (cached) {
+          const draft = JSON.parse(cached) as { title?: unknown; details?: unknown; due?: unknown; revision?: unknown };
+          if (typeof draft.title === 'string' && typeof draft.details === 'string' && typeof draft.due === 'string') {
+            if (draft.title !== taskTitle || draft.details !== taskDetails || draft.due !== taskDue) {
+              taskTitle = draft.title;
+              taskDetails = draft.details;
+              taskDue = draft.due;
+              taskRevision = typeof draft.revision === 'number' ? draft.revision : entry.task.revision;
+              taskDirty = true;
+              error = 'Rascunho da tarefa recuperado. Confira as alterações.';
+            } else discardLocalDraftByKey(taskDraftKey(entry.task.id));
+          }
+        }
+      } catch { /* Keep unreadable cache unchanged for manual recovery. */ }
     }
   }
 
@@ -390,6 +444,7 @@
     else if (field === 'details') taskDetails = value;
     else taskDue = value;
     taskDirty = true;
+    preserveTaskDraft();
     if (taskSaveTimer) clearTimeout(taskSaveTimer);
     const id = selected?.type === 'task' ? selected.task.id : null;
     taskSaveTimer = setTimeout(() => {
@@ -400,6 +455,7 @@
   function onIdeaEdit(value: string) {
     ideaText = value;
     ideaDirty = true;
+    preserveIdeaDraft();
     if (ideaSaveTimer) clearTimeout(ideaSaveTimer);
     const id = selected?.type === 'idea' ? selected.idea.id : null;
     ideaSaveTimer = setTimeout(() => {
@@ -417,16 +473,27 @@
     }
     const id = idea.id;
     const value = ideaText;
+    const expectedRevision = ideaRevision;
     ideaDirty = false;
     ideaSaving = true;
-    const write: Promise<boolean> = inboxApi.update(id, value)
+    const write: Promise<boolean> = inboxApi.update(id, value, expectedRevision)
       .then(updated => {
         ideas = ideas.map(i => i.id === updated.id ? updated : i);
+        if (draftIdeaId === id) {
+          ideaRevision = updated.revision;
+          ideaConflict = false;
+          if (!ideaDirty) discardLocalDraftByKey(ideaDraftKey(id));
+          else preserveIdeaDraft();
+        }
         return true;
       })
       .catch(e => {
         ideaDirty = true;
-        error = 'Não foi possível salvar a ideia. O texto continua aqui: ' + String(e);
+        ideaConflict = String(e).includes('CONFLITO_REVISAO');
+        preserveIdeaDraft();
+        error = ideaConflict
+          ? 'Conflito de edição: esta ideia foi alterada em outra janela. Seu texto está preservado.'
+          : 'Não foi possível salvar a ideia. Rascunho preservado: ' + String(e);
         return false;
       });
     ideaSaveInFlight = write;
@@ -474,16 +541,27 @@
     const id = task.id;
     const title = taskTitle;
     const details = taskDetails;
+    const expectedRevision = taskRevision;
     taskDirty = false;
     taskSaving = true;
-    const write: Promise<boolean> = tasksApi.update(id, title, details, dueAt)
+    const write: Promise<boolean> = tasksApi.update(id, title, details, dueAt, expectedRevision)
       .then(updated => {
         tasks = tasks.map(t => t.id === updated.id ? updated : t);
+        if (draftTaskId === id) {
+          taskRevision = updated.revision;
+          taskConflict = false;
+          if (!taskDirty) discardLocalDraftByKey(taskDraftKey(id));
+          else preserveTaskDraft();
+        }
         return true;
       })
       .catch(e => {
         taskDirty = true;
-        error = 'Não foi possível salvar a tarefa. O texto continua aqui: ' + String(e);
+        taskConflict = String(e).includes('CONFLITO_REVISAO');
+        preserveTaskDraft();
+        error = taskConflict
+          ? 'Conflito de edição: esta tarefa foi alterada em outra janela. Seu texto está preservado.'
+          : 'Não foi possível salvar a tarefa. Rascunho preservado: ' + String(e);
         return false;
       });
     taskSaveInFlight = write;
