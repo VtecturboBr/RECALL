@@ -72,3 +72,13 @@ Após cada entrega concreta: registrar branch, commit/PR, funcionalidades modifi
 - Direção adotada: editorial minimalista, comparada com central operacional e workspace de cartões; vermelho #E90530 como acento.
 - Arquivos-chave: `src/components/RecallStudio.svelte`, `src/recall.css`, `src/capture-redesign.css`, `src/sticky-redesign.css`, `docs/REDESIGN_ALPHA6.md`.
 - Pendente: validar builds e UI no Windows (foco de teclado, captura, editor, lembretes, backup, cartões). PR separado, sem merge na main.
+
+## Varredura técnica Alpha 6 — 12/11/2026
+
+- Base auditada: `a37f4557b6afc013d0cfdcd75007a3bd600a222a`, PR #8 (`feature/v0.5-alpha6-frontend-redesign`).
+- Branch exclusiva de diagnóstico: `audit/alpha6-varredura-bugs`, sem edições do código.
+- Documento: `docs/AUDITORIA_ALPHA6_BUGS_2026-11-12.md`.
+- Resultado: 14 achados (3 P1, 9 P2, 2 P3), com referências ao código e 14 cenários de regressão propostos.
+- Nenhum teste de GUI/Windows foi executado nesta varredura; CI preexistente passou, mas não cobre rascunhos, filtros ou corrida de dados.
+- Ordem recomendada: preservar rascunhos de tarefa/ideia/captura e proteger escrita concorrente; depois sincronização e filtros; por fim notificações/privacidade e CSP.
+- Não fazer merge na main; PR de auditoria registra apenas o diagnóstico.
