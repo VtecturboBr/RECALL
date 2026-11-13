@@ -13,6 +13,7 @@ on:
       - 'fix/alpha6-notificacoes-seguranca'
       - 'feature/v0.5-alpha7-onde-parei'
       - 'feature/v0.5-alpha8-migracao'
+      - 'feature/v0.5-alpha9-focus-2'
   workflow_dispatch:
 
 permissions:
@@ -77,7 +78,7 @@ jobs:
       - name: Publicar instalador para download
         uses: actions/upload-artifact@v4
         with:
-          name: RECALL-v0.5-alpha8-1-integrado-Windows-x64
+          name: RECALL-v0.5-alpha9-0-focus2-Windows-x64
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/bundle/nsis/SHA256SUMS.txt

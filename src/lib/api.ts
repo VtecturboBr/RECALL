@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Note, Task, TaskResume, InboxItem, Reminder, ReminderEvent, ReminderRule } from './types';
+import type { Note, Task, TaskResume, FocusSession, InboxItem, Reminder, ReminderEvent, ReminderRule } from './types';
 
 export const notesApi = {
   list: () => invoke<Note[]>('list_notes'),
@@ -39,6 +39,15 @@ export const tasksApi = {
     invoke<TaskResume>('save_task_resume', { taskId, lastContext, nextStep, expectedRevision }),
   complete: (id: string, completed: boolean) => invoke<Task>('set_task_completed', { id, completed }),
   delete: (id: string) => invoke<void>('delete_task', { id })
+};
+
+export const focusApi = {
+  active: () => invoke<FocusSession | null>('get_active_focus'),
+  history: (taskId: string) => invoke<FocusSession[]>('list_focus_sessions', { taskId }),
+  start: (taskId: string) => invoke<FocusSession>('start_focus_session', { taskId }),
+  heartbeat: (id: string) => invoke<FocusSession>('heartbeat_focus_session', { id }),
+  stop: (id: string, reason: 'paused' | 'finished', summary: string) =>
+    invoke<FocusSession>('stop_focus_session', { id, reason, summary })
 };
 
 export const inboxApi = {
