@@ -3,6 +3,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { Check, ChevronDown, ChevronUp, RotateCcw, ShieldAlert } from 'lucide-svelte';
   import { tasksApi, inboxApi } from '../lib/api';
+  import { saveOwnedDraft, discardOwnedDraft } from '../lib/draftOwnership';
 
   let { taskId, taskTitle }: { taskId: string; taskTitle: string } = $props();
   const CACHE_PREFIX = 'recall-resume-draft:';
@@ -23,14 +24,12 @@
 
   function preserveDraft() {
     try {
-      localStorage.setItem(cacheKey(), JSON.stringify({
-        lastContext, nextStep, revision, savedAt: Date.now()
-      }));
+      saveOwnedDraft(cacheKey(), { lastContext, nextStep, revision, savedAt: Date.now() });
     } catch { message = 'Não foi possível guardar o rascunho local. Use Salvar agora.'; }
   }
 
   function discardDraft() {
-    try { localStorage.removeItem(cacheKey()); } catch { /* Storage may be unavailable. */ }
+    try { discardOwnedDraft(cacheKey()); } catch { /* Storage may be unavailable. */ }
   }
 
   async function load() {

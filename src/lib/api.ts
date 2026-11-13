@@ -25,6 +25,22 @@ export function toLocalInput(timestamp: number | null): string {
 }
 
 
+async function focusDraftForTask(taskId: string): Promise<{ id: string; summary: string } | null> {
+  const active = await invoke<FocusSession | null>('get_active_focus');
+  if (!active || active.task_id !== taskId) return null;
+  try {
+    const summary = localStorage.getItem('recall-focus-summary:' + active.id);
+    return summary === null ? null : { id: active.id, summary: summary.slice(0, 2000) };
+  } catch { return null; }
+}
+function clearFocusDraftIfUnchanged(draft: { id: string; summary: string } | null) {
+  if (!draft) return;
+  try {
+    const key = 'recall-focus-summary:' + draft.id;
+    if (localStorage.getItem(key) === draft.summary) localStorage.removeItem(key);
+  } catch { /* Keep draft for manual recovery. */ }
+}
+
 export const tasksApi = {
   list: () => invoke<Task[]>('list_tasks'),
   create: (title: string) => invoke<Task>('create_task', { title }),
@@ -37,8 +53,17 @@ export const tasksApi = {
   getResume: (taskId: string) => invoke<TaskResume | null>('get_task_resume', { taskId }),
   saveResume: (taskId: string, lastContext: string, nextStep: string, expectedRevision: number) =>
     invoke<TaskResume>('save_task_resume', { taskId, lastContext, nextStep, expectedRevision }),
-  complete: (id: string, completed: boolean) => invoke<Task>('set_task_completed', { id, completed }),
-  delete: (id: string) => invoke<void>('delete_task', { id })
+  complete: async (id: string, completed: boolean) => {
+    const draft = completed ? await focusDraftForTask(id) : null;
+    const task = await invoke<Task>('set_task_completed', { id, completed, focusSummary: draft?.summary ?? null });
+    clearFocusDraftIfUnchanged(draft);
+    return task;
+  },
+  delete: async (id: string) => {
+    const draft = await focusDraftForTask(id);
+    await invoke<void>('delete_task', { id, focusSummary: draft?.summary ?? null });
+    clearFocusDraftIfUnchanged(draft);
+  }
 };
 
 export const focusApi = {
@@ -51,7 +76,7 @@ export const focusApi = {
 };
 
 export const reviewApi = {
-  list: () => invoke<DailyReviewItem[]>('list_daily_review')
+  list: (excludeKeys: string[] = []) => invoke<DailyReviewItem[]>('list_daily_review', { excludeKeys })
 };
 
 export const linksApi = {

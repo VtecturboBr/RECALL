@@ -126,12 +126,26 @@ pub async fn stop(pool: &SqlitePool, id: &str, state: &str, summary: &str) -> Re
 pub async fn finish_task_in_tx(
     tx: &mut sqlx::Transaction<'_,sqlx::Sqlite>, task_id: &str,
 ) -> Result<(),sqlx::Error> {
+    finish_task_with_summary_in_tx(tx, task_id, None).await
+}
+
+/// Closing the active session and saving a draft summary occur in the same
+/// transaction as task completion/deletion. No orphaned local-only summary.
+pub async fn finish_task_with_summary_in_tx(
+    tx: &mut sqlx::Transaction<'_,sqlx::Sqlite>, task_id: &str,
+    summary: Option<&str>,
+) -> Result<(),sqlx::Error> {
+    if summary.map(|text| text.chars().count() > 2_000).unwrap_or(false) {
+        return Err(sqlx::Error::Protocol("Resumo da sessão muito longo".into()));
+    }
     let now=now_ms();
     sqlx::query("UPDATE focus_sessions SET
        active_ms=active_ms+MIN(MAX(0,?-last_tick_at),?),
-       last_tick_at=?,ended_at=?,state='interrupted'
+       last_tick_at=?,ended_at=?,state='interrupted',
+       summary=COALESCE(?,summary)
        WHERE task_id=? AND state='active'")
-        .bind(now).bind(MAX_TICK_MS).bind(now).bind(now).bind(task_id)
+        .bind(now).bind(MAX_TICK_MS).bind(now).bind(now)
+        .bind(summary).bind(task_id)
         .execute(&mut **tx).await?;
     Ok(())
 }
@@ -144,6 +158,29 @@ mod tests {
         let dir=std::env::temp_dir().join(format!("recall-focus9-{}",Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         (dir.clone(),dir.join("memoria.sqlite"))
+    }
+
+    #[tokio::test]
+    async fn completing_or_deleting_task_persists_active_focus_summary_atomically() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let one=tasks::create(&pool,"Concluir com texto").await.unwrap();
+        let running=start(&pool,&one.id).await.unwrap();
+        tasks::set_completed_with_summary(&pool,&one.id,true,Some("Resumo que não pode sumir"))
+            .await.unwrap();
+        let saved: String=sqlx::query_scalar(
+            "SELECT summary FROM focus_sessions WHERE id=? AND state='interrupted'")
+            .bind(&running.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(saved,"Resumo que não pode sumir");
+        let two=tasks::create(&pool,"Excluir com texto").await.unwrap();
+        let running=start(&pool,&two.id).await.unwrap();
+        tasks::delete_with_summary(&pool,&two.id,Some("Texto mantido ao excluir"))
+            .await.unwrap();
+        let saved: String=sqlx::query_scalar(
+            "SELECT summary FROM focus_sessions WHERE id=? AND state='interrupted'")
+            .bind(&running.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(saved,"Texto mantido ao excluir");
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

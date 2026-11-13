@@ -7,7 +7,7 @@
     ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw, Target, ShieldCheck, AlarmClock, Repeat2, CheckCheck,
     Command, ArrowUpRight, CalendarDays, MoreHorizontal, Pin, Sparkles, LayoutGrid, Clock3, Inbox, Keyboard, PanelLeftClose, PanelLeftOpen, Coffee, CheckCircle2, Sun, NotebookPen
   } from 'lucide-svelte';
-  import { notesApi, tasksApi, inboxApi, backupsApi, remindersApi, formatDateTime, toLocalInput } from '../lib/api';
+  import { notesApi, tasksApi, focusApi, inboxApi, backupsApi, remindersApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
   import TaskResume from './TaskResume.svelte';
   import FocusSession from './FocusSession.svelte';
@@ -16,7 +16,8 @@
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../lib/editorSafety';
-  import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
+  import { saveOwnedDraft, discardOwnedDraft } from '../lib/draftOwnership';
+  import type { Note, Task, FocusSession as StoredFocusSession, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
 
   type View = 'now' | 'archive';
   let view = $state<View>('now');
@@ -39,6 +40,17 @@
   let busy = $state(false);
   let sidebarVisible = $state(true);
   let focusedTaskId = $state<string | null>(null);
+  let activeFocus = $state<StoredFocusSession | null>(null);
+  let activeFocusRequest = 0;
+  async function loadActiveFocus() {
+    const request = ++activeFocusRequest;
+    try {
+      const session = await focusApi.active();
+      if (request === activeFocusRequest) activeFocus = session;
+    } catch (e) {
+      error = 'Não foi possível consultar a sessão em foco: ' + String(e);
+    }
+  }
   let captureKind = $state<'idea' | 'task'>('idea');
   let clock = $state(new Date());
   let archiveFilter = $state<'all' | 'note' | 'task' | 'idea'>('all');
@@ -76,12 +88,12 @@
   function preserveNoteDraft() {
     if (!draftNoteId) return;
     try {
-      localStorage.setItem(draftKey(draftNoteId),
-        JSON.stringify({title:noteTitle,body:noteBody,revision:noteRevision}));
+      saveOwnedDraft(draftKey(draftNoteId),
+        {title:noteTitle,body:noteBody,revision:noteRevision});
     } catch { /* Database save remains authoritative; storage may be full. */ }
   }
   function discardLocalDraftByKey(key: string) {
-    try { localStorage.removeItem(key); } catch { /* Storage unavailable. */ }
+    try { discardOwnedDraft(key); } catch { /* Storage unavailable. */ }
   }
   function discardLocalDraft(id: string) { discardLocalDraftByKey(draftKey(id)); }
   let noteSaving = $state(false);
@@ -97,7 +109,7 @@
   function ideaDraftKey(id: string) { return 'recall-idea-draft:' + id; }
   function preserveIdeaDraft() {
     if (!draftIdeaId) return;
-    try { localStorage.setItem(ideaDraftKey(draftIdeaId), JSON.stringify({ text: ideaText, revision: ideaRevision })); }
+    try { saveOwnedDraft(ideaDraftKey(draftIdeaId), { text: ideaText, revision: ideaRevision }); }
     catch { /* Writing to SQLite remains authoritative. */ }
   }
   let ideaSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -114,9 +126,9 @@
   function taskDraftKey(id: string) { return 'recall-task-draft:' + id; }
   function preserveTaskDraft() {
     if (!draftTaskId) return;
-    try { localStorage.setItem(taskDraftKey(draftTaskId), JSON.stringify({
+    try { saveOwnedDraft(taskDraftKey(draftTaskId), {
       title: taskTitle, details: taskDetails, due: taskDue, revision: taskRevision
-    })); } catch { /* Writing to SQLite remains authoritative. */ }
+    }); } catch { /* Writing to SQLite remains authoritative. */ }
   }
   let taskSaveTimer: ReturnType<typeof setTimeout> | undefined;
   let taskSaveInFlight: Promise<boolean> | null = null;
@@ -238,6 +250,9 @@
     const dayClock = setInterval(() => { clock = new Date(); }, 60_000);
     const unlisteners: Array<() => void> = [];
     void refresh();
+    void loadActiveFocus();
+    void listen('focus:changed', () => { if (alive) void loadActiveFocus(); })
+      .then(dispose => { if (alive) unlisteners.push(dispose); else dispose(); });
     for (const eventName of ['notes:changed', 'tasks:changed', 'inbox:changed', 'reminders:changed']) {
       void listen(eventName, () => { if (alive) void refresh(); })
         .then(dispose => { if (alive) unlisteners.push(dispose); else dispose(); });
@@ -262,6 +277,7 @@
     window.addEventListener('keydown', onKey);
     return () => {
       alive = false;
+      activeFocusRequest++;
       clearInterval(dayClock);
       narrowViewport.removeEventListener('change', onNarrowChange);
       unlisteners.forEach(fn => fn());
@@ -693,11 +709,11 @@
         await openEntry('idea:' + created.id);
       } else if (entry.type === 'task') {
         const dueAt = taskDue ? new Date(taskDue).getTime() : null;
-        if (!taskTitle.trim() || (dueAt !== null && !Number.isFinite(dueAt))) {
+        if (dueAt !== null && !Number.isFinite(dueAt)) {
           throw new Error('Verifique o título e a data antes de criar a cópia.');
         }
         const created = await tasksApi.createPlanned(
-          taskTitle, taskDetails, entry.task.bucket, entry.task.planned_for, dueAt
+          taskTitleForSave(taskTitle), taskDetails, entry.task.bucket, entry.task.planned_for, dueAt
         );
         discardLocalDraftByKey(taskDraftKey(entry.task.id));
         taskDirty = false; taskConflict = false;
@@ -714,12 +730,22 @@
   }
 
   async function createBackup() {
-    if (backupBusy || !(await flushDraft())) return;
+    if (backupBusy) return;
+    // An unresolved editor conflict must never block protection of the
+    // authoritative SQLite database. Drafts live separately, not in this snapshot.
+    const unsaved = noteDirty || taskDirty || ideaDirty || noteConflict || taskConflict || ideaConflict;
+    if (noteDirty) preserveNoteDraft();
+    if (taskDirty) preserveTaskDraft();
+    if (ideaDirty) preserveIdeaDraft();
     backupBusy = true;
     backupMessage = '';
     try {
       const file = await backupsApi.create();
-      backupMessage = 'Backup verificado: ' + file.file_path;
+      backupMessage = 'Backup SQLite verificado: ' + file.file_path
+        + (unsaved ? ' · Atenção: este backup não inclui o rascunho ainda não salvo neste editor.' : '')
+        + (file.size_bytes > 100 * 1024 * 1024
+            ? ' · Arquivo acima de 100 MB: acompanhe o espaço livre, sem apagar backups anteriores.'
+            : '');
     } catch (e) { error = 'Falha ao criar backup: ' + String(e); }
     finally { backupBusy = false; }
   }
@@ -1021,6 +1047,19 @@
               </div>
             {/if}
           </section>
+
+          {#if activeFocus && activeFocus.task_id !== currentTask?.id}
+            <section class="re-focus re-focus-other" aria-label="Sessão ativa de outra tarefa">
+              <div class="re-focus-content">
+                <p class="re-focus-label">SESSÃO AINDA EM ANDAMENTO</p>
+                <h3>{tasks.find(task => task.id === activeFocus?.task_id)?.title ?? 'Tarefa em foco'}</h3>
+                <p class="re-focus-details">Você pode pausar ou finalizar esta sessão mesmo que a tarefa tenha sido movida para Depois ou Algum dia.</p>
+                {#key activeFocus.task_id}
+                  <FocusSession taskId={activeFocus.task_id}/>
+                {/key}
+              </div>
+            </section>
+          {/if}
 
           <div class="re-now-columns">
             <section class="re-section re-next" aria-label="Próximas tarefas">

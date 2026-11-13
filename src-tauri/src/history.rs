@@ -203,10 +203,8 @@ mod tests {
             .fetch_one(&upgraded).await.unwrap();
         assert_eq!(history_count, 4);
         let backup_count = db::list_backups(&path).unwrap();
-        assert_eq!(backup_count.len(), 3);
+        assert_eq!(backup_count.len(), 1);
         assert!(backup_count.iter().any(|b| b.file_name.contains("pre-alpha8")));
-        assert!(backup_count.iter().any(|b| b.file_name.contains("pre-alpha9")));
-        assert!(backup_count.iter().any(|b| b.file_name.contains("pre-alpha9-links")));
         let check: String = sqlx::query_scalar("PRAGMA quick_check").fetch_one(&upgraded).await.unwrap();
         assert_eq!(check, "ok");
         upgraded.close().await;

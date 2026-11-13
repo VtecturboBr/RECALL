@@ -87,6 +87,22 @@ pub fn list_backups(db_path: &Path) -> Result<Vec<BackupInfo>, String> {
 
 
 pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
+    // An interrupted offline restore can strand the old DB as
+    // .recall-original-*.sqlite. Never silently create a blank database over it.
+    if !path.exists() {
+        if let Some(folder) = path.parent() {
+            for entry in fs::read_dir(folder)
+                .map_err(|e| sqlx::Error::Protocol(format!("Falha ao verificar arquivos de restauração: {e}")))? {
+                let entry = entry.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(".recall-original-") && name.ends_with(".sqlite") {
+                    return Err(sqlx::Error::Protocol(
+                        "Restauração interrompida encontrada. O banco antigo foi preservado; execute o recuperador offline antes de iniciar o RECALL.".into()
+                    ));
+                }
+            }
+        }
+    }
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
@@ -110,12 +126,12 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
             sqlx::Error::Protocol(format!("Backup obrigatório pré-Alpha 8 falhou: {e}"))
         )?;
     }
-    if starting_version < 6 && existing_user_tables > 0 {
+    if starting_version == 5 && existing_user_tables > 0 {
         create_backup(&pool, path, "pre-alpha9").await.map_err(|e|
             sqlx::Error::Protocol(format!("Backup obrigatório pré-Alpha 9 falhou: {e}"))
         )?;
     }
-    if starting_version < 7 && existing_user_tables > 0 {
+    if starting_version == 6 && existing_user_tables > 0 {
         create_backup(&pool, path, "pre-alpha9-links").await.map_err(|e|
             sqlx::Error::Protocol(format!("Backup obrigatório pré-Alpha 9.1 falhou: {e}"))
         )?;
@@ -324,6 +340,19 @@ mod integrity_tests {
     }
 
     #[tokio::test]
+    async fn stranded_restore_original_blocks_blank_database_creation() {
+        let dir=temporary_dir();
+        let path=dir.join("memoria.sqlite");
+        let original=dir.join(".recall-original-crash.sqlite");
+        fs::write(&original,b"SQLite safety sentinel").unwrap();
+        let result=connect(&path).await;
+        assert!(result.is_err());
+        assert!(!path.exists(),"must not silently create empty DB after interrupted restore");
+        assert!(original.exists(),"must never discard stranded original");
+        let _=fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn legacy_upgrade_snapshots_before_creating_revision_table() {
         let dir = temporary_dir();
         let path = dir.join("memoria.sqlite");
@@ -345,10 +374,8 @@ mod integrity_tests {
         assert_eq!(first.title, "Meu texto");
         assert_eq!(first.body, "Preservar");
         let backups = list_backups(&path).unwrap();
-        assert_eq!(backups.len(), 4, "each legacy upgrade needs its own verified snapshot");
+        assert_eq!(backups.len(), 2, "a single verified pre-v5 snapshot covers all later additive migrations");
         assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha8") && b.size_bytes > 0));
-        assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha9") && b.size_bytes > 0));
-        assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha9-links") && b.size_bytes > 0));
         assert!(backups.iter().any(|b| b.file_name.contains("pre-integrity") && b.size_bytes > 0));
 
         let changed = save(&pool, "old", "Revisado", "Conteúdo", 0).await.unwrap().unwrap();

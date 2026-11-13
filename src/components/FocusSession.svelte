@@ -18,8 +18,6 @@
   let touched = $state(false);
   let mounted = false;
   let generation = 0;
-  let lastHeartbeatRequest = 0;
-  let ticking: Promise<void> | null = null;
   const draftKey = (sessionId: string) => 'recall-focus-summary:' + sessionId;
   let localSessionId = '';
 
@@ -64,36 +62,14 @@
     }
   }
 
-  async function heartbeat() {
-    const id = here?.id;
-    if (!id || ticking || busy) return;
-    const request = focusApi.heartbeat(id)
-      .then(row => {
-        if (mounted && active?.id === id && !busy) active = row;
-      })
-      .catch(e => {
-        if (mounted) {
-          message = 'A sessão precisa ser atualizada: ' + String(e);
-          void load();
-        }
-      }).finally(() => { if (ticking === request) ticking = null; });
-    ticking = request;
-    await request;
-  }
-
   onMount(() => {
     mounted = true;
     void load();
     let dispose: (() => void) | undefined;
     void listen('focus:changed', () => { if (mounted && !busy) void load(); })
       .then(unlisten => { if (mounted) dispose = unlisten; else unlisten(); });
-    const timer = setInterval(() => {
-      clock = Date.now();
-      if (here && !busy && clock - lastHeartbeatRequest >= 12_000) {
-        lastHeartbeatRequest = clock;
-        void heartbeat();
-      }
-    }, 1000);
+    // Persistence is driven by the Rust scheduler, independent of this panel.
+    const timer = setInterval(() => { clock = Date.now(); }, 1000);
     return () => {
       mounted = false;
       generation++;
@@ -111,7 +87,6 @@
       const session = await focusApi.start(taskId);
       active = session;
       loadSummary(session.id);
-      lastHeartbeatRequest = Date.now();
     } catch (e) {
       message = 'Não foi possível iniciar foco: ' + String(e);
     } finally {
@@ -126,7 +101,6 @@
     busy = true;
     message = '';
     try {
-      if (ticking) await ticking;
       await focusApi.stop(session.id, reason, summary.slice(0, 2000));
       discardSummary(session.id);
       active = null;

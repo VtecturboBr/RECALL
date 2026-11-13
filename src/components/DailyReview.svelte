@@ -51,7 +51,7 @@
     loading = true;
     error = '';
     try {
-      const found = await reviewApi.list();
+      const found = await reviewApi.list([...hidden].slice(0,100));
       if (alive && request === generation && expanded) {
         rows = found;
         loaded = true;
@@ -72,11 +72,13 @@
   function hideForToday(item: DailyReviewItem) {
     hidden = new Set([...hidden, reviewItemKey(item)]);
     storeHidden();
+    void refresh();
   }
 
   function showHidden() {
     hidden = new Set();
     storeHidden();
+    void refresh();
   }
 
   onMount(() => {

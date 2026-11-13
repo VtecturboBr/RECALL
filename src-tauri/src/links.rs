@@ -17,16 +17,6 @@ pub struct ItemLink {
     pub created_at: i64,
 }
 
-#[derive(Debug, FromRow)]
-struct LinkRow {
-    id: String,
-    left_type: String,
-    left_id: String,
-    right_type: String,
-    right_id: String,
-    created_at: i64,
-}
-
 pub async fn migrate_v7(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("CREATE TABLE item_links (
@@ -114,6 +104,39 @@ pub async fn add(pool: &SqlitePool, a_type: &str, a_id: &str, b_type: &str, b_id
     Ok(stored)
 }
 
+/// Preserve context when an Inbox idea is converted into a note or task.
+/// The original idea links remain stored for future history/restore, while
+/// all active neighbors become visible on the converted item atomically.
+pub async fn transfer_from_idea_in_tx(
+    tx: &mut sqlx::Transaction<'_,sqlx::Sqlite>,
+    idea_id: &str, target_type: &str, target_id: &str,
+) -> Result<(), sqlx::Error> {
+    validate_endpoint("idea",idea_id)?;
+    validate_endpoint(target_type,target_id)?;
+    let rows: Vec<(String,String,String,String)> = sqlx::query_as(
+        "SELECT left_type,left_id,right_type,right_id FROM item_links
+          WHERE (left_type='idea' AND left_id=?)
+             OR (right_type='idea' AND right_id=?)")
+        .bind(idea_id).bind(idea_id).fetch_all(&mut **tx).await?;
+    for (left_type,left_id,right_type,right_id) in rows {
+        let (other_type,other_id)=if left_type=="idea" && left_id==idea_id {
+            (right_type,right_id)
+        } else {(left_type,left_id)};
+        // Deleted or processed related items stay in original history only.
+        if !exists_active(&mut **tx,&other_type,&other_id).await? { continue; }
+        let ((a_type,a_id),(b_type,b_id))=
+            normalize(target_type,target_id,&other_type,&other_id)?;
+        sqlx::query("INSERT INTO item_links
+            (id,left_type,left_id,right_type,right_id,created_at)
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(left_type,left_id,right_type,right_id) DO NOTHING")
+            .bind(Uuid::new_v4().to_string())
+            .bind(a_type).bind(a_id).bind(b_type).bind(b_id).bind(now_ms())
+            .execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
 pub async fn remove(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     if id.is_empty() || id.len()>128 {return Err(sqlx::Error::RowNotFound);}
     let affected=sqlx::query("DELETE FROM item_links WHERE id=?").bind(id).execute(pool).await?;
@@ -123,37 +146,30 @@ pub async fn remove(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
 
 /// A 50-item bound prevents huge IPC payloads or N+1 loading in the inspector.
 /// Links to processed/excluded items stay in SQLite for later restoration.
+/// Filter inactive targets before the 50-item limit and retrieve all
+/// previews in ONE SQL query (no N+1 DB roundtrips).
 pub async fn list(pool: &SqlitePool, kind: &str, id: &str) -> Result<Vec<ItemLink>,sqlx::Error> {
     validate_endpoint(kind,id)?;
-    if !exists_active(pool,kind,id).await? {return Err(sqlx::Error::RowNotFound);}
-    let rows=sqlx::query_as::<_,LinkRow>(&format!(
-        "SELECT {LINK_FIELDS} FROM item_links
-         WHERE (left_type=? AND left_id=?) OR (right_type=? AND right_id=?)
-         ORDER BY created_at DESC,id DESC LIMIT 50"))
-        .bind(kind).bind(id).bind(kind).bind(id).fetch_all(pool).await?;
-    let mut entries=Vec::with_capacity(rows.len());
-    for row in rows {
-        let (other_type,other_id)=if row.left_type==kind && row.left_id==id {
-            (row.right_type,row.right_id)
-        } else {(row.left_type,row.left_id)};
-        let data:Option<(String,String)>=match other_type.as_str(){
-            "note"=>sqlx::query_as("SELECT COALESCE(NULLIF(TRIM(title),''),'Sem título'),
-                    SUBSTR(body,1,180) FROM notes WHERE id=? AND deleted_at IS NULL")
-                .bind(&other_id).fetch_optional(pool).await?,
-            "task"=>sqlx::query_as("SELECT title,SUBSTR(details,1,180) FROM tasks
-                    WHERE id=? AND deleted_at IS NULL")
-                .bind(&other_id).fetch_optional(pool).await?,
-            "idea"=>sqlx::query_as("SELECT SUBSTR(text,1,90),SUBSTR(text,1,180)
-                    FROM inbox_items WHERE id=? AND processed_at IS NULL")
-                .bind(&other_id).fetch_optional(pool).await?,
-            _=>None,
-        };
-        if let Some((title,preview))=data{
-            entries.push(ItemLink{id:row.id,item_type:other_type,item_id:other_id,
-                title,preview,created_at:row.created_at});
-        }
-    }
-    Ok(entries)
+    if !exists_active(pool,kind,id).await? { return Err(sqlx::Error::RowNotFound); }
+    sqlx::query_as::<_,ItemLink>(
+        "SELECT q.id,q.other_type AS item_type,q.other_id AS item_id,
+            COALESCE(NULLIF(TRIM(n.title),''),NULLIF(TRIM(t.title),''),
+              NULLIF(TRIM(SUBSTR(i.text,1,90)),''),'Sem título') AS title,
+            SUBSTR(COALESCE(n.body,t.details,i.text,''),1,180) AS preview,
+            q.created_at
+         FROM (
+            SELECT id,right_type AS other_type,right_id AS other_id,created_at
+              FROM item_links WHERE left_type=? AND left_id=?
+            UNION ALL
+            SELECT id,left_type AS other_type,left_id AS other_id,created_at
+              FROM item_links WHERE right_type=? AND right_id=?
+         ) q
+         LEFT JOIN notes n ON q.other_type='note' AND n.id=q.other_id AND n.deleted_at IS NULL
+         LEFT JOIN tasks t ON q.other_type='task' AND t.id=q.other_id AND t.deleted_at IS NULL
+         LEFT JOIN inbox_items i ON q.other_type='idea' AND i.id=q.other_id AND i.processed_at IS NULL
+         WHERE n.id IS NOT NULL OR t.id IS NOT NULL OR i.id IS NOT NULL
+         ORDER BY q.created_at DESC,q.id DESC LIMIT 50"
+    ).bind(kind).bind(id).bind(kind).bind(id).fetch_all(pool).await
 }
 
 #[cfg(test)]
@@ -164,6 +180,48 @@ mod tests {
         let dir=std::env::temp_dir().join(format!("recall-links9-{}",Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         (dir.clone(),dir.join("memoria.sqlite"))
+    }
+
+    #[tokio::test]
+    async fn hidden_targets_cannot_exhaust_first_fifty_visible_links() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let source=tasks::create(&pool,"Central").await.unwrap();
+        for number in 0..65 {
+            let note=db::create_copy(&pool,&format!("N{number}"),"texto","note").await.unwrap();
+            let link_id=add(&pool,"task",&source.id,"note",&note.id).await.unwrap();
+            sqlx::query("UPDATE item_links SET created_at=? WHERE id=?")
+                .bind(1_000_000_i64+number).bind(&link_id).execute(&pool).await.unwrap();
+            if number >= 10 {db::delete(&pool,&note.id).await.unwrap();}
+        }
+        let shown=list(&pool,"task",&source.id).await.unwrap();
+        assert_eq!(shown.len(),10,"active links must be filtered before LIMIT");
+        assert!(shown.iter().all(|x| x.title.starts_with('N')));
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn idea_conversion_copies_only_live_relations_and_keeps_original_history() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let idea=inbox::capture(&pool,"Nova ideia").await.unwrap();
+        let note=db::create_copy(&pool,"Referência","Texto","note").await.unwrap();
+        let stale=db::create_copy(&pool,"Excluída","Texto","note").await.unwrap();
+        let old=add(&pool,"idea",&idea.id,"note",&note.id).await.unwrap();
+        add(&pool,"idea",&idea.id,"note",&stale.id).await.unwrap();
+        db::delete(&pool,&stale.id).await.unwrap();
+        let created=inbox::to_task(&pool,&idea.id).await.unwrap();
+        let visible=list(&pool,"task",&created.id).await.unwrap();
+        assert_eq!(visible.len(),1);
+        assert_eq!(visible[0].item_id,note.id);
+        let old_still_exists: i64=sqlx::query_scalar("SELECT COUNT(*) FROM item_links WHERE id=?")
+            .bind(&old).fetch_one(&pool).await.unwrap();
+        assert_eq!(old_still_exists,1);
+        let next_idea=inbox::capture(&pool,"Outra").await.unwrap();
+        add(&pool,"idea",&next_idea.id,"task",&created.id).await.unwrap();
+        let converted=inbox::to_note(&pool,&next_idea.id).await.unwrap();
+        assert_eq!(list(&pool,"note",&converted.id).await.unwrap().len(),1);
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
