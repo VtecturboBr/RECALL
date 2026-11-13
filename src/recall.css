@@ -297,3 +297,27 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .re-focus-history-item small{font-size:11px;color:#a996a0}
 .re-focus-history-item p{width:100%;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;color:var(--re-secondary);margin:1px 0 3px}
 @media(max-width:680px){.re-focus-session-actions{align-items:stretch}.re-focus-session-actions button{flex:1 1 135px}}
+
+
+/* Alpha 9.1 — related context inside existing Archive inspector. */
+.re-linked-wrapper{max-width:800px;margin:-38px auto 0;padding:0 clamp(25px,4vw,58px) 58px}
+.re-linked{border:1px solid #39313b;border-radius:11px;background:#171519;padding:18px;max-width:100%;overflow:hidden}
+.re-linked-title{display:flex;align-items:center;gap:9px;font-size:13px;color:#f2dbe3}
+.re-linked-title svg{color:#eb7996}
+.re-linked-hint,.re-linked-status{font-size:12px;line-height:1.55;color:var(--re-secondary);margin:8px 0 14px}
+.re-linked-list{display:flex;flex-direction:column;margin:10px 0 14px}
+.re-linked-item{display:flex;align-items:center;gap:6px;min-width:0;padding:4px 0;border-bottom:1px solid #332b33}
+.re-linked-open{min-width:0;flex:1;display:flex;gap:10px;align-items:center;text-align:left;background:none;border:0;padding:9px 3px;color:#eadddf;cursor:pointer}
+.re-linked-open>svg{flex-shrink:0;color:#e37f9a}
+.re-linked-open>span{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
+.re-linked-open strong{font-size:12px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.re-linked-open small{font-size:11px;color:var(--re-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.re-linked-open:hover strong{color:#fff}
+.re-linked-remove{width:32px;height:32px;flex-shrink:0;display:grid;place-items:center;background:transparent;border:1px solid transparent;border-radius:8px;color:#bfaab5;cursor:pointer}
+.re-linked-remove:hover{border-color:#774252;color:#ffcbd9}
+.re-linked-controls{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.re-linked-controls select{flex:1 1 170px;min-width:0;width:100%;background:#131216;border:1px solid #473943;border-radius:8px;color:#eee0e5;padding:9px 10px;font-size:12px}
+.re-linked-controls .re-outline{min-height:36px;font-size:12px}
+.re-linked-error{font-size:12px;color:#ffb3c7;line-height:1.5;overflow-wrap:anywhere;margin:9px 0 0}
+@media(max-width:880px){.re-linked-wrapper{padding-left:20px;padding-right:20px}}
+@media(max-width:680px){.re-linked-wrapper{margin:-27px auto 0;padding:0 20px 36px}.re-linked-controls{flex-direction:column;align-items:stretch}}
