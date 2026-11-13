@@ -33,7 +33,7 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
       - name: Instalar dependencias web
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Verificar Svelte e TypeScript
         run: npm run check
       - name: Configurar Python para testes de restauração
@@ -47,22 +47,6 @@ jobs:
       - name: Compilar frontend
         run: npm run build
       - name: Verificar Rust/Tauri
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
       - name: Testes de unidade Rust
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
-      # Temporary audit step. Read-only output used to persist exact lockfiles
-      # in the PR branch; removed after harvesting.
-      - name: Emitir lockfiles para auditoria
-        if: github.ref == 'refs/heads/fix/alpha9-2-1-integridade-estabilidade'
-        shell: pwsh
-        run: |
-          @'
-          import base64,pathlib
-          files = {'npm':'package-lock.json','cargo':'src-tauri/Cargo.lock'}
-          for label,filename in files.items():
-              raw=pathlib.Path(filename).read_bytes()
-              encoded=base64.b64encode(raw).decode('ascii')
-              for i in range(0,len(encoded),1800):
-                  print('LOCKDATA|' + label + '|' + str(i//1800) + '|' + encoded[i:i+1800])
-          '@ | python -
-
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
