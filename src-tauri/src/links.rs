@@ -150,6 +150,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn hidden_targets_cannot_exhaust_first_fifty_visible_links() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let source=tasks::create(&pool,"Central").await.unwrap();
+        for number in 0..65 {
+            let note=db::create_copy(&pool,&format!("N{number}"),"texto","note").await.unwrap();
+            let link_id=add(&pool,"task",&source.id,"note",&note.id).await.unwrap();
+            sqlx::query("UPDATE item_links SET created_at=? WHERE id=?")
+                .bind(1_000_000_i64+number).bind(&link_id).execute(&pool).await.unwrap();
+            if number >= 10 {db::delete(&pool,&note.id).await.unwrap();}
+        }
+        let shown=list(&pool,"task",&source.id).await.unwrap();
+        assert_eq!(shown.len(),10,"active links must be filtered before LIMIT");
+        assert!(shown.iter().all(|x| x.title.starts_with('N')));
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn symmetric_duplicate_safe_and_self_link_rejected() {
         let (dir,path)=fixture();
         let pool=db::connect(&path).await.unwrap();
