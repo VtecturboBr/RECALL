@@ -170,10 +170,12 @@ pub async fn save_resume(
 
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     let now = now_ms();
+    let mut tx = pool.begin().await?;
     let updated = sqlx::query("UPDATE tasks SET deleted_at=?,updated_at=? WHERE id=? AND deleted_at IS NULL")
-        .bind(now).bind(now).bind(id).execute(pool).await?;
+        .bind(now).bind(now).bind(id).execute(&mut *tx).await?;
     if updated.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
-    Ok(())
+    reminders::cancel_in_tx(&mut tx, "task", id).await?;
+    tx.commit().await
 }
 
 
