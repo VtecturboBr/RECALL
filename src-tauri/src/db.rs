@@ -93,6 +93,23 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
         .journal_mode(SqliteJournalMode::Wal)
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await?;
+    let starting_version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await?;
+    if starting_version > 5 {
+        return Err(sqlx::Error::Protocol(
+            "Banco de dados criado por versão mais recente do RECALL; atualização necessária".into()
+        ));
+    }
+    // The verified pre-v5 backup must happen BEFORE any legacy migrations or
+    // v5 schema changes. A new empty database needs no pre-migration snapshot.
+    let existing_user_tables: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table'
+            AND name IN ('notes','tasks','inbox_items')"
+    ).fetch_one(&pool).await?;
+    if starting_version < 5 && existing_user_tables > 0 {
+        create_backup(&pool, path, "pre-alpha8").await.map_err(|e|
+            sqlx::Error::Protocol(format!("Backup obrigatório pré-Alpha 8 falhou: {e}"))
+        )?;
+    }
     // On upgrades, the first integrity-schema change is preceded by a verified
     // snapshot. New databases do not need a pre-migration backup.
     let old_notes: i64 = sqlx::query_scalar(
@@ -171,6 +188,10 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     crate::reminders::initialize(&pool).await?;
     let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await?;
     if version < 4 { sqlx::query("PRAGMA user_version = 4").execute(&pool).await?; }
+    if starting_version < 5 {
+        crate::history::migrate_v5(&pool).await?;
+    }
+    crate::history::verify_v5(&pool).await?;
     Ok(pool)
 }
 
