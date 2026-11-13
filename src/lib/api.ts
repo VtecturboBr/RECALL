@@ -76,7 +76,7 @@ export const focusApi = {
 };
 
 export const reviewApi = {
-  list: () => invoke<DailyReviewItem[]>('list_daily_review')
+  list: (excludeKeys: string[] = []) => invoke<DailyReviewItem[]>('list_daily_review', { excludeKeys })
 };
 
 export const linksApi = {
