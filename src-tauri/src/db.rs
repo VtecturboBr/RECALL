@@ -321,9 +321,9 @@ mod integrity_tests {
         assert_eq!(first.title, "Meu texto");
         assert_eq!(first.body, "Preservar");
         let backups = list_backups(&path).unwrap();
-        assert_eq!(backups.len(), 1);
-        assert!(backups[0].file_name.contains("pre-integrity"));
-        assert!(backups[0].size_bytes > 0);
+        assert_eq!(backups.len(), 2, "each legacy upgrade needs its own verified snapshot");
+        assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha8") && b.size_bytes > 0));
+        assert!(backups.iter().any(|b| b.file_name.contains("pre-integrity") && b.size_bytes > 0));
 
         let changed = save(&pool, "old", "Revisado", "Conteúdo", 0).await.unwrap().unwrap();
         assert_eq!(changed.revision, 1);
@@ -331,7 +331,7 @@ mod integrity_tests {
         assert_eq!(get(&pool, "old").await.unwrap().unwrap().title, "Revisado");
 
         let second_pool = connect(&path).await.unwrap();
-        assert_eq!(list_backups(&path).unwrap().len(), 1, "migration backup cannot repeat");
+        assert_eq!(list_backups(&path).unwrap().len(), backups.len(), "migration backups cannot repeat");
         second_pool.close().await;
         pool.close().await;
         let _ = fs::remove_dir_all(dir);
