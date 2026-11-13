@@ -67,9 +67,16 @@ pub async fn update(pool: &SqlitePool, id: &str, text: &str, expected_revision: 
 
 pub async fn dismiss(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     let now = now_ms();
+    let mut tx = pool.begin().await?;
     let result = sqlx::query("UPDATE inbox_items SET processed_at=?, updated_at=? WHERE id=? AND processed_at IS NULL")
-        .bind(now).bind(now).bind(id).execute(pool).await?;
+        .bind(now).bind(now).bind(id).execute(&mut *tx).await?;
     if result.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
+    // Atomic disposition differentiates a genuine discard from a conversion.
+    sqlx::query("INSERT INTO inbox_dispositions(item_id,state,target_id,changed_at)
+        VALUES(?,'dismissed',NULL,?)
+        ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,target_id=NULL,changed_at=excluded.changed_at")
+        .bind(id).bind(now).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -95,6 +102,10 @@ pub async fn to_note(pool: &SqlitePool, id: &str) -> Result<db::Note, sqlx::Erro
     let note_id = Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO notes (id,title,body,kind,created_at,updated_at) VALUES (?,?,?,'note',?,?)")
         .bind(&note_id).bind(title).bind(body).bind(now).bind(now).execute(&mut *transaction).await?;
+    sqlx::query("INSERT INTO inbox_dispositions(item_id,state,target_id,changed_at)
+        VALUES(?,'converted_note',?,?)
+        ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,target_id=excluded.target_id,changed_at=excluded.changed_at")
+        .bind(id).bind(&note_id).bind(now).execute(&mut *transaction).await?;
     transaction.commit().await?;
     db::get(pool, &note_id).await?.ok_or(sqlx::Error::RowNotFound)
 }
@@ -112,6 +123,10 @@ pub async fn to_task(pool: &SqlitePool, id: &str) -> Result<Task, sqlx::Error> {
     let task_id = Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO tasks(id,title,details,created_at,updated_at) VALUES (?,?,?,?,?)")
         .bind(&task_id).bind(title).bind(details).bind(now).bind(now).execute(&mut *transaction).await?;
+    sqlx::query("INSERT INTO inbox_dispositions(item_id,state,target_id,changed_at)
+        VALUES(?,'converted_task',?,?)
+        ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,target_id=excluded.target_id,changed_at=excluded.changed_at")
+        .bind(id).bind(&task_id).bind(now).execute(&mut *transaction).await?;
     transaction.commit().await?;
     crate::tasks::get(pool, &task_id).await?.ok_or(sqlx::Error::RowNotFound)
 }

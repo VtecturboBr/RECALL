@@ -12,6 +12,7 @@
   import TaskResume from './TaskResume.svelte';
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
+  import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../lib/editorSafety';
   import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
 
   type View = 'now' | 'archive';
@@ -265,7 +266,7 @@
       if (saveTimer) clearTimeout(saveTimer);
       if (taskSaveTimer) clearTimeout(taskSaveTimer);
       if (ideaSaveTimer) clearTimeout(ideaSaveTimer);
-      if (ideaDirty && selected?.type === 'idea') void saveIdea(selected.idea);
+      if (ideaDirty && selected?.type === 'idea' && !isEmptyIdeaEdit(ideaText)) void saveIdea(selected.idea);
       if (noteDirty) void flushNote();
       if (taskDirty && selected?.type === 'task') void saveTask(selected.task);
     };
@@ -277,7 +278,7 @@
   }
 
   async function captureInline() {
-    if (!newText.trim() || busy) return;
+    if (busy || (captureKind === 'idea' && !newText.trim())) return;
     busy = true;
     try {
       const originalText = newText;
@@ -285,8 +286,9 @@
       const text = originalText.trim();
       if (originalKind === 'task') {
         const draft = parseTaskCapture(text, new Date());
-        if (!draft.title.trim() || draft.title.length > 250) throw new Error('Use um título de até 250 caracteres.');
-        const task = await tasksApi.createPlanned(draft.title, draft.details, draft.bucket, draft.plannedFor, draft.dueAt);
+        const title = taskTitleForSave(draft.title);
+        if (title.length > 250) throw new Error('Use um título de até 250 caracteres.');
+        const task = await tasksApi.createPlanned(title, draft.details, draft.bucket, draft.plannedFor, draft.dueAt);
         if (!currentTask && draft.bucket === 'today') chooseFocus(task.id);
       } else {
         await inboxApi.capture(text);
@@ -404,12 +406,16 @@
         const cached = localStorage.getItem(ideaDraftKey(entry.idea.id));
         if (cached) {
           const draft = JSON.parse(cached) as { text?: unknown; revision?: unknown };
-          if (typeof draft.text === 'string' && draft.text !== entry.idea.text) {
+          if (typeof draft.text === 'string' && restoreIdeaDraft(draft.text, entry.idea.text)) {
             ideaText = draft.text;
             ideaRevision = typeof draft.revision === 'number' ? draft.revision : entry.idea.revision;
             ideaDirty = true;
             error = 'Rascunho da ideia recuperado. Confira as alterações.';
-          } else if (draft.text === entry.idea.text) discardLocalDraftByKey(ideaDraftKey(entry.idea.id));
+          } else if (typeof draft.text === 'string') {
+            // The old editor could cache an invalid empty draft and reopen with
+            // a blank inspector. Keep the original SQLite text visible instead.
+            discardLocalDraftByKey(ideaDraftKey(entry.idea.id));
+          }
         }
       } catch { /* Keep unreadable cache unchanged for manual recovery. */ }
     }
@@ -529,8 +535,9 @@
     if (ideaSaveTimer) { clearTimeout(ideaSaveTimer); ideaSaveTimer = undefined; }
     if (ideaSaveInFlight && !(await ideaSaveInFlight)) return false;
     if (!ideaDirty) return true;
-    if (!ideaText.trim()) {
-      error = 'A ideia não pode ficar vazia.';
+    if (isEmptyIdeaEdit(ideaText)) {
+      // A temporary empty field is an edit in progress, not a valid stored idea.
+      // Navigation handles it safely instead of trapping the user here.
       return false;
     }
     const id = idea.id;
@@ -569,7 +576,22 @@
 
   async function flushDraft(): Promise<boolean> {
     if (selected?.type === 'task') return saveTask(selected.task);
-    if (selected?.type === 'idea') return saveIdea(selected.idea);
+    if (selected?.type === 'idea') {
+      if (ideaDirty && isEmptyIdeaEdit(ideaText)) {
+        // A blank edit has no valid data to save. Cancel only this invalid
+        // change, never the original nonempty idea persisted in SQLite.
+        if (ideaSaveTimer) { clearTimeout(ideaSaveTimer); ideaSaveTimer = undefined; }
+        if (ideaSaveInFlight) await ideaSaveInFlight;
+        discardLocalDraftByKey(ideaDraftKey(selected.idea.id));
+        ideaText = selected.idea.text;
+        ideaRevision = selected.idea.revision;
+        ideaDirty = false;
+        ideaConflict = false;
+        error = 'O campo vazio não foi salvo. A ideia original continua guardada.';
+        return true;
+      }
+      return saveIdea(selected.idea);
+    }
     return flushNote();
   }
 
@@ -591,17 +613,17 @@
       if (!(await taskSaveInFlight)) return false;
     }
     if (!taskDirty) return true;
-    if (!taskTitle.trim()) {
-      error = 'O título da tarefa não pode ficar vazio.';
-      return false;
-    }
+    // Allow clearing a task title without locking navigation or losing details.
+    // SQLite stores a readable placeholder instead of an invalid blank title.
+    const normalizedTitle = taskTitleForSave(taskTitle);
+    if (taskTitle !== normalizedTitle) taskTitle = normalizedTitle;
     const dueAt = taskDue ? new Date(taskDue).getTime() : null;
     if (dueAt !== null && !Number.isFinite(dueAt)) {
       error = 'Data inválida.';
       return false;
     }
     const id = task.id;
-    const title = taskTitle;
+    const title = normalizedTitle;
     const details = taskDetails;
     const expectedRevision = taskRevision;
     taskDirty = false;
@@ -806,6 +828,22 @@
     view = 'archive';
   }
 
+  async function createBlankTask() {
+    if (busy || !(await flushDraft())) return;
+    busy = true;
+    try {
+      const created = await tasksApi.create(UNNAMED_TASK);
+      await refresh();
+      archiveFilter = 'all';
+      archivePeriod = 'all';
+      search = '';
+      view = 'archive';
+      await openEntry('task:' + created.id);
+      requestAnimationFrame(() => document.querySelector<HTMLInputElement>('#re-task-title')?.focus());
+    } catch (e) { error = 'Não foi possível criar a tarefa: ' + String(e); }
+    finally { busy = false; }
+  }
+
   async function createDocument(kind: 'note' | 'presentation') {
     if (busy || !(await flushDraft())) return;
     busy = true;
@@ -830,16 +868,41 @@
   }
 
   async function deleteSelected() {
-    if (!selected || busy || !confirm('Excluir este item?')) return;
-    if (!(await flushDraft())) return;
-    if (selected.type === 'task' && selected.task.id === focusedTaskId) clearFocus();
+    const entry = selected;
+    if (!entry || busy) return;
+    // Deleting is deliberate: do not require a valid autosave first, because
+    // blank edits and conflicts could otherwise permanently block deletion.
+    if (!confirm('Excluir este item? Alterações ainda não salvas nele serão descartadas.')) return;
     busy = true;
     try {
-      if (selected.type === 'note') await notesApi.delete(selected.note.id);
-      else if (selected.type === 'task') await tasksApi.delete(selected.task.id);
-      else await inboxApi.dismiss(selected.idea.id);
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = undefined; }
+      if (ideaSaveTimer) { clearTimeout(ideaSaveTimer); ideaSaveTimer = undefined; }
+      if (taskSaveTimer) { clearTimeout(taskSaveTimer); taskSaveTimer = undefined; }
+      // Await edits already in SQLite's queue before deleting; never reopen
+      // or restore drafts after the deletion has been acknowledged.
+      if (saveInFlight) await saveInFlight;
+      if (ideaSaveInFlight) await ideaSaveInFlight;
+      if (taskSaveInFlight) await taskSaveInFlight;
+      if (entry.type === 'note') await notesApi.delete(entry.note.id);
+      else if (entry.type === 'task') await tasksApi.delete(entry.task.id);
+      else await inboxApi.dismiss(entry.idea.id);
+      // Only discard local recovery copies after the backend confirms deletion.
+      if (entry.type === 'note') discardLocalDraft(entry.note.id);
+      if (entry.type === 'task') {
+        discardLocalDraftByKey(taskDraftKey(entry.task.id));
+        if (entry.task.id === focusedTaskId) clearFocus();
+      }
+      if (entry.type === 'idea') discardLocalDraftByKey(ideaDraftKey(entry.idea.id));
       selectedKey = null;
       draftNoteId = null;
+      draftTaskId = null;
+      draftIdeaId = null;
+      noteDirty = false;
+      ideaDirty = false;
+      taskDirty = false;
+      noteConflict = false;
+      ideaConflict = false;
+      taskConflict = false;
       await refresh();
     } catch (e) { error = 'Falha ao excluir: ' + String(e); }
     finally { busy = false; }
@@ -991,7 +1054,7 @@
                     placeholder={captureKind === 'task' ? 'Qual é a próxima ação?' : 'Escreva antes de esquecer...'}></textarea>
                   <div class="re-compose-bottom">
                     <span>Sem pressão para organizar.</span>
-                    <button type="submit" class="re-primary re-square" aria-label={captureKind === 'task' ? 'Criar tarefa' : 'Guardar ideia'} title="Guardar" disabled={busy || !newText.trim()}><ArrowRight size={19}/></button>
+                    <button type="submit" class="re-primary re-square" aria-label={captureKind === 'task' ? 'Criar tarefa' : 'Guardar ideia'} title="Guardar" disabled={busy || (captureKind === 'idea' && !newText.trim())}><ArrowRight size={19}/></button>
                   </div>
                 </div>
                 {#if captureKind === 'task' && smartDraft.recognized}<p class="re-compose-preview"><CalendarDays size={14}/>{smartDraft.label} · sem notificação automática</p>{/if}
@@ -1099,6 +1162,7 @@
           </div>
           <div class="re-collection-bottom">
             <button onclick={() => { void createDocument('note'); }} disabled={busy}><Plus size={16}/> Nova nota</button>
+            <button onclick={() => { void createBlankTask(); }} disabled={busy}><CheckCircle2 size={16}/> Nova tarefa</button>
             <button onclick={() => { void createDocument('presentation'); }} disabled={busy}><Presentation size={15}/> Apresentação</button>
           </div>
         </section>
@@ -1120,7 +1184,7 @@
               </div>
               <div class="re-editor-head"><h1>Uma ideia vale guardar.</h1><p>Edite livremente ou transforme em algo para fazer.</p></div>
               <label class="re-field"><span>CONTEÚDO</span><textarea class="re-idea-body" rows="12" maxlength="100000" value={ideaText} placeholder="O que veio à sua cabeça?" oninput={(e) => onIdeaEdit(e.currentTarget.value)} onblur={() => { void saveIdea(selected.idea); }}></textarea></label>
-              <div class="re-save-state" aria-live="polite"><span class:pending={ideaDirty || ideaSaving}></span>{ideaSaving ? 'Salvando...' : ideaDirty ? 'Alterações pendentes' : 'Salvo automaticamente'}</div>
+              <div class="re-save-state" aria-live="polite"><span class:pending={ideaDirty || ideaSaving}></span>{ideaSaving ? 'Salvando...' : ideaDirty && isEmptyIdeaEdit(ideaText) ? 'Campo vazio — texto salvo preservado ao sair' : ideaDirty ? 'Alterações pendentes' : 'Salvo automaticamente'}</div>
               <div class="re-editor-footer"><button class="re-primary" disabled={busy} onclick={() => { void convertIdea(selected.idea,'note'); }}><FileText size={16}/> Transformar em nota</button>
                 <button class="re-outline" disabled={busy} onclick={() => { void convertIdea(selected.idea,'task'); }}><CheckCircle2 size={16}/> Criar tarefa</button></div>
             </div>

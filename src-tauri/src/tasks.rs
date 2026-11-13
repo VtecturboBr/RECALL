@@ -170,10 +170,12 @@ pub async fn save_resume(
 
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     let now = now_ms();
+    let mut tx = pool.begin().await?;
     let updated = sqlx::query("UPDATE tasks SET deleted_at=?,updated_at=? WHERE id=? AND deleted_at IS NULL")
-        .bind(now).bind(now).bind(id).execute(pool).await?;
+        .bind(now).bind(now).bind(id).execute(&mut *tx).await?;
     if updated.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
-    Ok(())
+    reminders::cancel_in_tx(&mut tx, "task", id).await?;
+    tx.commit().await
 }
 
 
@@ -201,6 +203,29 @@ mod planning_tests {
         sqlx::query("UPDATE tasks SET details='Externo' WHERE id=?")
             .bind(&task.id).execute(&pool).await.unwrap();
         assert!(super::update(&pool, &task.id, "Stale", "", None, 1).await.unwrap().is_none());
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn task_delete_undoes_everything_when_reminder_cancel_fails() {
+        let dir = test_dir();
+        let path = dir.join("memoria.sqlite");
+        let pool = crate::db::connect(&path).await.unwrap();
+        let task = super::create(&pool, "Importante").await.unwrap();
+        crate::reminders::schedule(&pool, "task", &task.id,
+            crate::db::now_ms() + 3_600_000, "none").await.unwrap();
+        sqlx::query("CREATE TRIGGER reject_task_delete_cancel BEFORE INSERT ON reminder_events
+            WHEN NEW.kind='cancelled' BEGIN SELECT RAISE(ABORT,'simulated SQL failure'); END")
+            .execute(&pool).await.unwrap();
+        assert!(super::delete(&pool, &task.id).await.is_err());
+        assert!(super::get(&pool, &task.id).await.unwrap().is_some());
+        sqlx::query("DROP TRIGGER reject_task_delete_cancel").execute(&pool).await.unwrap();
+        super::delete(&pool, &task.id).await.unwrap();
+        assert!(super::get(&pool, &task.id).await.unwrap().is_none());
+        let title: String = sqlx::query_scalar("SELECT title FROM tasks WHERE id=?")
+            .bind(&task.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(title, "Importante");
         pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -273,14 +298,25 @@ mod planning_tests {
         let dir=test_dir(); let path=dir.join("memoria.sqlite");
         let pool=crate::db::connect(&path).await.unwrap();
         let task=super::create(&pool,"Tarefa pré-existente").await.unwrap();
+        // Reconstruct a genuine pre-Alpha-7/8 fixture. A v5 database missing
+        // its history tables must be rejected, not silently "repaired".
+        for trigger in ["history_note_before_edit","history_task_before_edit",
+            "history_idea_before_edit","history_resume_before_edit",
+            "history_resume_external_revision"] {
+            sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger}"))
+                .execute(&pool).await.unwrap();
+        }
+        sqlx::query("DROP TABLE content_history").execute(&pool).await.unwrap();
+        sqlx::query("DROP TABLE inbox_dispositions").execute(&pool).await.unwrap();
         sqlx::query("DROP TABLE task_resumes").execute(&pool).await.unwrap();
+        sqlx::query("PRAGMA user_version = 3").execute(&pool).await.unwrap();
         pool.close().await;
         let reopened=crate::db::connect(&path).await.unwrap();
         assert_eq!(super::get(&reopened,&task.id).await.unwrap().unwrap().title,"Tarefa pré-existente");
         let backups=crate::db::list_backups(&path).unwrap();
         assert!(backups.iter().any(|x| x.file_name.contains("pre-resume")));
         let rev: i64=sqlx::query_scalar("PRAGMA user_version").fetch_one(&reopened).await.unwrap();
-        assert_eq!(rev,4);
+        assert_eq!(rev,5);
         reopened.close().await; let _=std::fs::remove_dir_all(dir);
     }
 

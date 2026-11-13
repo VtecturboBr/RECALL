@@ -93,6 +93,23 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
         .journal_mode(SqliteJournalMode::Wal)
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await?;
+    let starting_version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await?;
+    if starting_version > 5 {
+        return Err(sqlx::Error::Protocol(
+            "Banco de dados criado por versão mais recente do RECALL; atualização necessária".into()
+        ));
+    }
+    // The verified pre-v5 backup must happen BEFORE any legacy migrations or
+    // v5 schema changes. A new empty database needs no pre-migration snapshot.
+    let existing_user_tables: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table'
+            AND name IN ('notes','tasks','inbox_items')"
+    ).fetch_one(&pool).await?;
+    if starting_version < 5 && existing_user_tables > 0 {
+        create_backup(&pool, path, "pre-alpha8").await.map_err(|e|
+            sqlx::Error::Protocol(format!("Backup obrigatório pré-Alpha 8 falhou: {e}"))
+        )?;
+    }
     // On upgrades, the first integrity-schema change is preceded by a verified
     // snapshot. New databases do not need a pre-migration backup.
     let old_notes: i64 = sqlx::query_scalar(
@@ -171,6 +188,10 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     crate::reminders::initialize(&pool).await?;
     let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await?;
     if version < 4 { sqlx::query("PRAGMA user_version = 4").execute(&pool).await?; }
+    if starting_version < 5 {
+        crate::history::migrate_v5(&pool).await?;
+    }
+    crate::history::verify_v5(&pool).await?;
     Ok(pool)
 }
 
@@ -248,9 +269,15 @@ pub async fn set_reminder(pool: &SqlitePool, id: &str, remind_at: Option<i64>) -
 }
 
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE notes SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL")
-        .bind(now_ms()).bind(now_ms()).bind(id).execute(pool).await?;
-    Ok(())
+    // Soft-delete and reminder cancellation must commit together. A failure in
+    // the reminder event log must not leave a note silently deleted.
+    let now = now_ms();
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query("UPDATE notes SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL")
+        .bind(now).bind(now).bind(id).execute(&mut *tx).await?;
+    if result.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
+    crate::reminders::cancel_in_tx(&mut tx, "note", id).await?;
+    tx.commit().await
 }
 
 pub async fn due(pool: &SqlitePool) -> Result<Vec<Note>, sqlx::Error> {
@@ -300,9 +327,9 @@ mod integrity_tests {
         assert_eq!(first.title, "Meu texto");
         assert_eq!(first.body, "Preservar");
         let backups = list_backups(&path).unwrap();
-        assert_eq!(backups.len(), 1);
-        assert!(backups[0].file_name.contains("pre-integrity"));
-        assert!(backups[0].size_bytes > 0);
+        assert_eq!(backups.len(), 2, "each legacy upgrade needs its own verified snapshot");
+        assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha8") && b.size_bytes > 0));
+        assert!(backups.iter().any(|b| b.file_name.contains("pre-integrity") && b.size_bytes > 0));
 
         let changed = save(&pool, "old", "Revisado", "Conteúdo", 0).await.unwrap().unwrap();
         assert_eq!(changed.revision, 1);
@@ -310,7 +337,7 @@ mod integrity_tests {
         assert_eq!(get(&pool, "old").await.unwrap().unwrap().title, "Revisado");
 
         let second_pool = connect(&path).await.unwrap();
-        assert_eq!(list_backups(&path).unwrap().len(), 1, "migration backup cannot repeat");
+        assert_eq!(list_backups(&path).unwrap().len(), backups.len(), "migration backups cannot repeat");
         second_pool.close().await;
         pool.close().await;
         let _ = fs::remove_dir_all(dir);
@@ -337,6 +364,37 @@ mod integrity_tests {
         assert_eq!(get(&pool, &note.id).await.unwrap().unwrap().revision, 2);
         assert!(save(&pool, &note.id, "Stale", "X", 1).await.unwrap().is_none());
 
+        pool.close().await;
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn delete_note_is_atomic_even_when_cancelling_reminder_fails() {
+        let dir = temporary_dir();
+        let path = dir.join("memoria.sqlite");
+        let pool = connect(&path).await.unwrap();
+        let note = create_copy(&pool, "Important", "Não perder", "note").await.unwrap();
+        crate::reminders::schedule(&pool, "note", &note.id, now_ms() + 3_600_000, "none")
+            .await.unwrap();
+        sqlx::query("CREATE TRIGGER stop_note_cancel BEFORE INSERT ON reminder_events
+            WHEN NEW.kind='cancelled' BEGIN SELECT RAISE(ABORT, 'simulated cancel failure'); END")
+            .execute(&pool).await.unwrap();
+        assert!(delete(&pool, &note.id).await.is_err(), "delete must roll back");
+        let kept = get(&pool, &note.id).await.unwrap().unwrap();
+        assert_eq!(kept.body, "Não perder");
+        let state: String = sqlx::query_scalar("SELECT state FROM reminder_rules WHERE target_type='note' AND target_id=?")
+            .bind(&note.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(state, "scheduled");
+
+        sqlx::query("DROP TRIGGER stop_note_cancel").execute(&pool).await.unwrap();
+        delete(&pool, &note.id).await.unwrap();
+        assert!(get(&pool, &note.id).await.unwrap().is_none());
+        let archived_body: String = sqlx::query_scalar("SELECT body FROM notes WHERE id=?")
+            .bind(&note.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(archived_body, "Não perder", "deletion must be reversible later");
+        let cancelled: String = sqlx::query_scalar("SELECT state FROM reminder_rules WHERE target_type='note' AND target_id=?")
+            .bind(&note.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(cancelled, "cancelled");
         pool.close().await;
         let _ = fs::remove_dir_all(dir);
     }

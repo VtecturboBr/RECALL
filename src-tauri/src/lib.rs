@@ -2,6 +2,7 @@ mod db;
 mod tasks;
 mod inbox;
 mod reminders;
+mod history;
 
 use sqlx::SqlitePool;
 use tauri::{Emitter, Manager};
@@ -106,7 +107,6 @@ async fn set_note_reminder(state: tauri::State<'_, AppState>, app: tauri::AppHan
 #[tauri::command]
 async fn delete_note(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String) -> Result<(), String> {
     db::delete(&state.pool, &id).await.map_err(|e| e.to_string())?;
-    reminders::cancel(&state.pool, "note", &id).await.map_err(|e| e.to_string())?;
     let _ = app.emit("reminders:changed", &id);
     let _ = app.emit("notes:changed", &id);
     Ok(())
@@ -163,7 +163,6 @@ async fn set_task_completed(state: tauri::State<'_, AppState>, app: tauri::AppHa
 #[tauri::command]
 async fn delete_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String) -> Result<(), String> {
     tasks::delete(&state.pool, &id).await.map_err(|e| e.to_string())?;
-    reminders::cancel(&state.pool, "task", &id).await.map_err(|e| e.to_string())?;
     let _ = app.emit("reminders:changed", &id);
     let _ = app.emit("tasks:changed", &id);
     Ok(())
