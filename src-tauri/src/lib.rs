@@ -2,6 +2,7 @@ mod db;
 mod tasks;
 mod inbox;
 mod reminders;
+mod history;
 
 use sqlx::SqlitePool;
 use tauri::{Emitter, Manager};
