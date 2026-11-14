@@ -1,5 +1,9 @@
 import type { BoardRect, BoardBounds, BoardViewport } from './boardNavigation';
-import { clampBoardZoom } from './boardNavigation';
+
+// Keep this module runtime dependency-free so Node tests use native TS strip.
+function visibilityZoom(value:number):number {
+  return Number.isFinite(value)?Math.max(.1,Math.min(2.2,value)):1;
+}
 
 /**
  * Small, testable visibility layer; SQLite keeps every board card. Only the
@@ -31,7 +35,7 @@ export function currentBoardWorldWindow(
   screenHeight: number,
   overscanPx=BOARD_OVERSCAN_PX
 ): WorldViewportRect {
-  const zoom=clampBoardZoom(view.zoom);
+  const zoom=visibilityZoom(view.zoom);
   const width=Math.max(1, Number.isFinite(screenWidth)?screenWidth:1);
   const height=Math.max(1, Number.isFinite(screenHeight)?screenHeight:1);
   const pad=Math.max(0,Number.isFinite(overscanPx)?overscanPx:0);
