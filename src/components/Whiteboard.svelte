@@ -101,6 +101,7 @@
     return item.content.trim().slice(0,120) || 'Cartão sem texto';
   }
   function focusCard(id: string) {
+    if (switching || loading) return;
     const item = findItem(id);
     if (!item || !stage) return;
     const view = focusBoardItem(item,viewportWidth,viewportHeight,zoom);
@@ -109,12 +110,14 @@
     scheduleViewSave();
   }
   function fitAll() {
+    if (switching || loading) return;
     const view = fitBoardView(items,viewportWidth,viewportHeight);
     panX=view.panX; panY=view.panY; zoom=view.zoom;
     scheduleViewSave();
   }
   function closeBoardSearch() { searchOpen=false; searchQuery=''; }
   function boardShortcut(event: KeyboardEvent) {
+    if (switching || loading) return;
     const target=event.target;
     if (pickerOpen || (target instanceof HTMLElement &&
       target.closest('input,textarea,select,[contenteditable="true"],button'))) return;
@@ -523,6 +526,7 @@
   }
   function wheel(event: WheelEvent) {
     event.preventDefault();
+    if (switching || loading) return;
     zoomAt(event.clientX, event.clientY, zoom * (event.deltaY > 0 ? .90 : 1.10));
   }
   function zoomButton(factor: number) {
@@ -530,7 +534,7 @@
     if (bounds) zoomAt(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2, zoom * factor);
   }
   function startPan(event: PointerEvent) {
-    if (event.button !== 0 && event.button !== 1) return;
+    if (switching || loading || (event.button !== 0 && event.button !== 1)) return;
     const target = event.target;
     if (target instanceof HTMLElement && target.closest('.re-board-card,.re-board-empty,.re-board-zoom,.re-board-minimap,.re-board-search-panel,button,input,textarea,a')) return;
     stage.focus({preventScroll:true});
@@ -928,5 +932,5 @@
   .re-board-zoom button{width:32px;height:32px;display:grid;place-items:center;background:none;border:0;color:#eee}
   .re-board-zoom span{font-size:12px;min-width:47px;text-align:center;color:#cac0c9}
   .re-board-help{position:absolute;bottom:24px;left:22px;font-size:11px;color:#a9a0ae;background:#17151abc;padding:9px 11px;border-radius:7px;pointer-events:none}
-  @media(max-width:800px){.re-board-toolbar{padding:12px;gap:10px}.re-board-intro small{display:none}.re-board-tools button{padding:8px;font-size:11px}.re-board-help{display:none}.re-board-minimap{bottom:16px;left:10px}.re-board-mini-content{width:140px;height:90px}}
+  @media(max-width:800px){.re-board-toolbar{padding:12px;gap:10px}.re-board-intro small{display:none}.re-board-tools button{padding:8px;font-size:11px}.re-board-help{display:none}.re-board-minimap{bottom:16px;left:10px}}
 </style>
