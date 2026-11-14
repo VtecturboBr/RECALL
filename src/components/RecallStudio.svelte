@@ -13,6 +13,7 @@
   import FocusSession from './FocusSession.svelte';
   import LinkedItems from './LinkedItems.svelte';
   import DailyReview from './DailyReview.svelte';
+  import ActiveFocusBar from './ActiveFocusBar.svelte';
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../lib/editorSafety';
@@ -598,13 +599,30 @@
     return flushNote();
   }
 
+  async function focusSummaryForTask(taskId: string): Promise<{ sessionId: string | null; summary: string | undefined }> {
+    const active = await focusApi.active();
+    if (!active || active.task_id !== taskId) return { sessionId: null, summary: undefined };
+    let summary: string | undefined;
+    try { summary = localStorage.getItem('recall-focus-summary:' + active.id)?.slice(0,2000) ?? undefined; }
+    catch { /* Summary draft may be unavailable; do not erase existing history. */ }
+    return { sessionId: active.id, summary };
+  }
+
+  function clearSavedFocusSummary(sessionId: string | null) {
+    if (!sessionId) return;
+    try { localStorage.removeItem('recall-focus-summary:' + sessionId); } catch { /* best effort */ }
+  }
+
   async function completeTask(task: Task) {
     if (busy) return;
     if (selected?.type === 'task' && selected.task.id === task.id && !(await flushDraft())) return;
     busy = true;
     try {
-      await tasksApi.complete(task.id, task.completed_at === null);
-      if (task.completed_at === null && task.id === focusedTaskId) clearFocus();
+      const finishing = task.completed_at === null;
+      const draft = finishing ? await focusSummaryForTask(task.id) : {sessionId:null, summary:undefined};
+      await tasksApi.complete(task.id, finishing, draft.summary);
+      if (finishing) clearSavedFocusSummary(draft.sessionId);
+      if (finishing && task.id === focusedTaskId) clearFocus();
       await refresh();
     } catch (e) { error = 'Falha ao alterar tarefa: ' + String(e); }
     finally { busy = false; }
@@ -693,11 +711,11 @@
         await openEntry('idea:' + created.id);
       } else if (entry.type === 'task') {
         const dueAt = taskDue ? new Date(taskDue).getTime() : null;
-        if (!taskTitle.trim() || (dueAt !== null && !Number.isFinite(dueAt))) {
+        if (taskTitleForSave(taskTitle).length > 250 || (dueAt !== null && !Number.isFinite(dueAt))) {
           throw new Error('Verifique o título e a data antes de criar a cópia.');
         }
         const created = await tasksApi.createPlanned(
-          taskTitle, taskDetails, entry.task.bucket, entry.task.planned_for, dueAt
+          taskTitleForSave(taskTitle), taskDetails, entry.task.bucket, entry.task.planned_for, dueAt
         );
         discardLocalDraftByKey(taskDraftKey(entry.task.id));
         taskDirty = false; taskConflict = false;
@@ -714,12 +732,21 @@
   }
 
   async function createBackup() {
-    if (backupBusy || !(await flushDraft())) return;
+    if (backupBusy) return;
+    const saved = await flushDraft();
+    // SQLite backup captures committed data. Uncommitted editor drafts stay in
+    // localStorage; a conflict must not prevent securing the last good database.
+    if (!saved) {
+      preserveNoteDraft();
+      preserveTaskDraft();
+      preserveIdeaDraft();
+    }
     backupBusy = true;
     backupMessage = '';
     try {
       const file = await backupsApi.create();
-      backupMessage = 'Backup verificado: ' + file.file_path;
+      backupMessage = 'Backup verificado: ' + file.file_path +
+        (saved ? '' : ' · Atenção: edições pendentes/conflitantes ficaram nos rascunhos locais e NÃO estão neste backup.');
     } catch (e) { error = 'Falha ao criar backup: ' + String(e); }
     finally { backupBusy = false; }
   }
@@ -886,9 +913,13 @@
       if (saveInFlight) await saveInFlight;
       if (ideaSaveInFlight) await ideaSaveInFlight;
       if (taskSaveInFlight) await taskSaveInFlight;
+      let focusDraft: { sessionId: string | null; summary: string | undefined } = { sessionId: null, summary: undefined };
       if (entry.type === 'note') await notesApi.delete(entry.note.id);
-      else if (entry.type === 'task') await tasksApi.delete(entry.task.id);
-      else await inboxApi.dismiss(entry.idea.id);
+      else if (entry.type === 'task') {
+        focusDraft = await focusSummaryForTask(entry.task.id);
+        await tasksApi.delete(entry.task.id, focusDraft.summary);
+      } else await inboxApi.dismiss(entry.idea.id);
+      clearSavedFocusSummary(focusDraft.sessionId);
       // Only discard local recovery copies after the backend confirms deletion.
       if (entry.type === 'note') discardLocalDraft(entry.note.id);
       if (entry.type === 'task') {
@@ -916,6 +947,7 @@
 
 <div class="re-app" class:re-collapsed={!sidebarVisible}>
   <button type="button" class="re-sidebar-backdrop" aria-label="Fechar menu lateral" onclick={() => sidebarVisible = false}></button>
+  <ActiveFocusBar onOpen={(taskId) => { void archiveEntry('task:' + taskId); }}/>
   <aside class="re-sidebar" aria-label="Navegação do RECALL">
     <div class="re-brand">
       <div class="re-brand-mark" aria-hidden="true"><BrainCircuit size={22} strokeWidth={1.8}/></div>
