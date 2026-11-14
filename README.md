@@ -2,7 +2,7 @@
 
 **Sua memória externa para Windows:** notas, tarefas, ideias, lembretes locais, apresentações, foco, revisão diária e o novo Quadro Infinito.
 
-> **Versão experimental desta branch:** `0.5.0-alpha.10.5` — histórico seguro de Desfazer/Refazer no Quadro. CI e teste visual no Windows continuam obrigatórios. **Não é uma versão estável.** Sem sincronização Android.
+> **Nova etapa experimental:** `0.5.0-alpha.11.0` — desempenho do Quadro com renderização de área visível, carregamento de imagens sob demanda e minimapa em canvas. CI e teste manual no Windows continuam obrigatórios. **Não é versão estável.** Sem sincronização Android.
 
 ## O que o aplicativo oferece
 
@@ -13,6 +13,17 @@
 - **Captura Rápida:** janela global `Ctrl+Shift+Espaço` enquanto o RECALL está em execução, inclusive na bandeja; cria ideias e tarefas.
 - **Lembretes 2.0:** notificações genéricas (sem título privado na tela bloqueada), recorrência, adiamento e recuperação de lembretes vencidos.
 - **Armazenamento local:** SQLite com WAL, revisões concorrentes para dados textuais, exclusão lógica, históricos internos e snapshots verificados.
+
+## Alpha 11.0 — Quadro Infinito escalável
+
+- **Renderização por região visível:** a interface cria elementos somente para cartões que estão na tela e uma pequena margem de segurança. O SQLite continua mantendo **todos os cartões**.
+- **Conexões com recorte espacial:** desenha somente as setas que cruzam a região visível, inclusive quando ambos os cartões de origem estão fora da tela.
+- **Minimapa em Canvas:** em vez de criar milhares de botões para cada cartão, desenha o mapa num único elemento Canvas. Clique para centralizar uma região; Enter para enquadrar.
+- **Imagens sob demanda:** busca o conteúdo de imagens apenas quando próximas da tela, com até três carregamentos simultâneos e cache visual limitada a 20 imagens. Conteúdo do SQLite não é removido.
+- **Testes com 5 mil cartões simulados:** validam filtragem, coordenadas negativas, conexões, zoom, minimapa e limites de imagens.
+- **Sem migração do banco:** o schema SQLite continua na versão v10. Os rascunhos, backups, referências e histórico CAS da Alpha 10.5 permanecem protegidos.
+
+Veja [escopo, limitações e validação da Alpha 11.0](docs/ALPHA11_QUADRO_ESCALAVEL.md).
 
 ## Alpha 10.5 — Desfazer e refazer no Quadro
 
@@ -86,7 +97,7 @@ Esta atualização corrige erros encontrados na auditoria da Alpha 9.2:
 1. Feche o RECALL completamente pelo ícone da bandeja do sistema.
 2. Faça uma cópia integral da pasta `%APPDATA%\app.memoriaexterna.desktop`. Para testar migrações, prefira uma **conta Windows de teste** e uma **cópia** dos dados, não o banco principal.
 3. Abra [GitHub Actions do RECALL](https://github.com/VtecturboBr/RECALL/actions/workflows/windows-installer.yml).
-4. Selecione o run da branch `feature/v0.5-alpha10-5-historico-seguro` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-5-historico-seguro-Windows-x64`.
+4. Selecione o run da branch `feature/v0.5-alpha11-quadro-escalavel` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha11-quadro-escalavel-Windows-x64`.
 5. Extraia o ZIP, compare o SHA-256 do `.exe` com `SHA256SUMS.txt` e instale. Consulte [guia do instalador](docs/INSTALADOR_WINDOWS.md).
 
 O instalador é prévia **não assinada digitalmente**. Nenhum merge automático é feito na `main`.
