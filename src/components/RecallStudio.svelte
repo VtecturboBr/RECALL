@@ -5,7 +5,7 @@
     BrainCircuit, CircleDot, Archive, Search, Plus, Check, Circle, Bell,
     FileText, Pencil, CalendarClock, MonitorUp, Presentation, ChevronLeft,
     ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw, Target, ShieldCheck, AlarmClock, Repeat2, CheckCheck,
-    Command, ArrowUpRight, CalendarDays, MoreHorizontal, Pin, Sparkles, LayoutGrid, Clock3, Inbox, Keyboard, PanelLeftClose, PanelLeftOpen, Coffee, CheckCircle2, Sun, NotebookPen
+    Command, ArrowUpRight, CalendarDays, MoreHorizontal, Pin, Sparkles, LayoutGrid, PanelsTopLeft, Clock3, Inbox, Keyboard, PanelLeftClose, PanelLeftOpen, Coffee, CheckCircle2, Sun, NotebookPen
   } from 'lucide-svelte';
   import { notesApi, tasksApi, inboxApi, backupsApi, remindersApi, focusApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
@@ -14,13 +14,14 @@
   import LinkedItems from './LinkedItems.svelte';
   import DailyReview from './DailyReview.svelte';
   import ActiveFocusBar from './ActiveFocusBar.svelte';
+  import Whiteboard from './Whiteboard.svelte';
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../lib/editorSafety';
   import { saveOwnedDraft, discardOwnedDraft } from '../lib/draftOwnership';
   import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
 
-  type View = 'now' | 'archive';
+  type View = 'now' | 'archive' | 'board';
   let view = $state<View>('now');
   let notes = $state<Note[]>([]);
   let tasks = $state<Task[]>([]);
@@ -943,6 +944,9 @@
       <button class:active={view === 'archive'} aria-current={view === 'archive' ? 'page' : undefined} onclick={() => { void switchView('archive'); }}>
         <LayoutGrid size={18}/><span>Arquivo</span><span class="re-nav-number">{entries.length}</span>
       </button>
+      <button class:active={view === 'board'} aria-current={view === 'board' ? 'page' : undefined} onclick={() => { void switchView('board'); }}>
+        <PanelsTopLeft size={18}/><span>Quadro</span><span class="re-nav-number">∞</span>
+      </button>
     </nav>
 
     <div class="re-sidebar-divider"></div>
@@ -964,7 +968,7 @@
       <button class="re-icon re-navtoggle" aria-label={sidebarVisible ? 'Recolher menu' : 'Expandir menu'} title="Alternar menu" onclick={() => sidebarVisible = !sidebarVisible}>
         {#if sidebarVisible}<PanelLeftClose size={19}/>{:else}<PanelLeftOpen size={19}/>{/if}
       </button>
-      <div class="re-breadcrumb"><span>WORKSPACE</span><ChevronRight size={13}/><strong>{view === 'now' ? 'Agora' : 'Arquivo'}</strong></div>
+      <div class="re-breadcrumb"><span>WORKSPACE</span><ChevronRight size={13}/><strong>{view === 'now' ? 'Agora' : view === 'board' ? 'Quadro' : 'Arquivo'}</strong></div>
       <div class="re-top-actions">
         <button class="re-icon" title="Pesquisar no arquivo (Ctrl+K)" aria-label="Pesquisar" onclick={() => { void switchView('archive').then(() => requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.re-search input')?.focus())); }}><Search size={18}/></button>
         <button class="re-icon" title="Criar backup dos dados" aria-label="Criar backup dos dados" disabled={backupBusy} onclick={() => { void createBackup(); }}><ShieldCheck size={19}/></button>
@@ -998,6 +1002,8 @@
 
     {#if loading}
       <div class="re-loading"><div class="re-loading-mark"><BrainCircuit size={25}/></div><p>Abrindo seu espaço...</p></div>
+    {:else if view === 'board'}
+      <Whiteboard/>
     {:else if view === 'now'}
       <div class="re-scroll re-now">
         <div class="re-container">

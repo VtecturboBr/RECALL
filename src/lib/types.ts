@@ -1,3 +1,17 @@
+export type BoardKind = 'note' | 'link' | 'table' | 'image';
+export interface BoardItem {
+  id: string;
+  kind: BoardKind;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  content: string;
+  revision: number;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface Note {
   id: string;
   title: string;
