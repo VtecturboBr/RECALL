@@ -3,6 +3,11 @@
   import { listen } from '@tauri-apps/api/event';
   import { StickyNote, ImagePlus, Link2, Table2, ZoomIn, ZoomOut, RotateCcw, Trash2, Move, Plus, ExternalLink, Pencil, Unlink2, Database, FileText, ListTodo, Search, X, CheckCircle2 } from 'lucide-svelte';
   import { boardApi } from '../lib/api';
+  import { saveOwnedDraft, discardOwnedDraft, isOwnedOrLegacyDraft, currentDraftOwner } from '../lib/draftOwnership';
+  import {
+    boardDraftState, parseBoardDraft, listBoardRecovery, sameBoardDraftFields,
+    shouldDiscardExactBoardDraft, type BoardRecoveryEntry
+  } from '../lib/boardRecovery';
   import {
     boardBounds, fitBoardView, focusBoardItem, saveBoardView,
     restoreBoardView, searchBoardCards, miniRect, visibleWorldRect,
@@ -33,6 +38,9 @@
   let busy = $state(false);
   let error = $state('');
   let message = $state('');
+  let recoveryOpen = $state(false);
+  let recoveryBusy = $state(false);
+  let recoveries = $state<BoardRecoveryEntry[]>([]);
   let selected = $state<string | null>(null);
   let zoom = $state(1);
   let panX = $state(0);
@@ -139,24 +147,86 @@
     return a.x === b.x && a.y === b.y && a.width === b.width
       && a.height === b.height && a.content === b.content;
   }
+  function scanBoardRecoveries(boardId = activeBoardId) {
+    try {
+      const entries: {key: string; raw: string}[] = [];
+      for (let index=0; index<localStorage.length; index++) {
+        const key = localStorage.key(index);
+        if (!key || !(key.startsWith('recall-board-draft:') ||
+          key.startsWith('recall-draft-recovery:recall-board-draft:'))) continue;
+        const raw = localStorage.getItem(key);
+        if (raw!==null) entries.push({key,raw});
+      }
+      recoveries = listBoardRecovery(entries,boardId,items,100,dirty,currentDraftOwner());
+    } catch {
+      // Storage can be disabled. SQLite is authoritative; do not claim data recovered.
+      message = 'O armazenamento local de recuperação não está disponível nesta janela.';
+    }
+  }
   function keepDraft(item: BoardItem) {
     try {
-      localStorage.setItem(draftKey(item.id), JSON.stringify({
-        content: item.content, x: item.x, y: item.y,
-        width: item.width, height: item.height, revision: item.revision
-      }));
+      saveOwnedDraft(draftKey(item.id), {
+        boardId:item.board_id, kind:item.kind,
+        content:item.content, x:item.x,y:item.y,
+        width:item.width,height:item.height,revision:item.revision
+      });
     } catch { message = 'O rascunho local não pôde ser gravado. Evite fechar antes de salvar.'; }
   }
-  function clearDraftIfSame(item: BoardItem) {
+  function clearDraftIfSame(item: BoardItem, expectedRaw: string | null) {
     try {
-      const raw = localStorage.getItem(draftKey(item.id));
-      if (!raw) return;
-      const draft = JSON.parse(raw) as Partial<BoardItem>;
-      if (draft.content === item.content && draft.x === item.x && draft.y === item.y
-          && draft.width === item.width && draft.height === item.height) {
-        localStorage.removeItem(draftKey(item.id));
+      const key = draftKey(item.id);
+      const raw = localStorage.getItem(key);
+      if (!shouldDiscardExactBoardDraft(raw, expectedRaw) || !raw) return;
+      const snapshot = parseBoardDraft(raw,item);
+      if (snapshot && sameBoardDraftFields(snapshot,item)) {
+        discardOwnedDraft(key);
       }
-    } catch { /* Do not destroy a damaged recovery snapshot. */ }
+    } catch { /* Never delete a damaged recovery snapshot. */ }
+  }
+  function recoveryDescription(entry: BoardRecoveryEntry): string {
+    if (entry.status==='conflict') return 'O banco possui uma revisão mais recente. Nenhum texto foi sobrescrito.';
+    if (entry.status==='competing') return 'Rascunho criado em outra janela ou cópia preservada de um conflito.';
+    if (entry.status==='orphan') return 'O cartão original não aparece mais neste quadro.';
+    if (entry.status==='pending') return 'Alteração ainda não confirmada pelo banco SQLite.';
+    return 'O registro não pode ser lido automaticamente; o texto original está preservado.';
+  }
+  async function copyRecovery(entry: BoardRecoveryEntry) {
+    const snap=entry.snapshot;
+    if (!snap || snap.kind==='image' || references[entry.itemId]
+        || loading || switching || recoveryBusy) return;
+    recoveryBusy = true;
+    try {
+      const fresh = await boardApi.create(
+        activeBoardId,snap.kind,
+        Math.max(-9_999_900,Math.min(9_999_900,snap.x+48)),
+        Math.max(-9_999_900,Math.min(9_999_900,snap.y+48)),
+        snap.content
+      );
+      items = [...items,fresh];
+      selected=fresh.id;
+      message='Cópia recuperada em um novo cartão. O cartão e o rascunho originais foram preservados.';
+      recoveryOpen=false;
+      scanBoardRecoveries();
+      focusCard(fresh.id);
+    } catch(e) { error='Não foi possível criar a cópia de recuperação: '+String(e); }
+    finally { recoveryBusy=false; }
+  }
+  function discardRecovery(entry: BoardRecoveryEntry) {
+    if (dirty.has(entry.itemId) || flights.has(entry.itemId)) {
+      error='O cartão ainda possui mudanças pendentes. Salve ou crie uma cópia antes de descartar.';
+      return;
+    }
+    if (!window.confirm('Descartar apenas esta cópia local? Esta ação não altera os dados do SQLite.')) return;
+    try {
+      if (shouldDiscardExactBoardDraft(localStorage.getItem(entry.key),entry.raw)) {
+        localStorage.removeItem(entry.key);
+        scanBoardRecoveries();
+        message='Cópia de recuperação local descartada. Os dados SQLite não foram alterados.';
+      } else {
+        error='A cópia foi modificada em outra janela e não foi descartada.';
+        scanBoardRecoveries();
+      }
+    } catch(e) { error='Não foi possível descartar a cópia: '+String(e); }
   }
   function updateLocal(id: string, changes: Partial<BoardItem>, commit = true) {
     if (switching || loading) return;
@@ -185,6 +255,8 @@
     if (previous !== undefined) clearTimeout(previous);
     timers.delete(id);
     const snapshot = { ...value };
+    let originalDraftRaw: string | null = null;
+    try { originalDraftRaw = localStorage.getItem(draftKey(id)); } catch { /* optional cache */ }
     dirty.delete(id);
     const flight = (async () => {
       try {
@@ -193,7 +265,7 @@
         if (!latest) return;
         const unchanged = sameFields(latest, snapshot);
         items = items.map(item => item.id === id ? { ...item, revision: saved.revision, updated_at: saved.updated_at } : item);
-        if (unchanged && !dirty.has(id)) clearDraftIfSame(snapshot);
+        if (unchanged && !dirty.has(id)) clearDraftIfSame(snapshot,originalDraftRaw);
         else {
           dirty.add(id);
           const current = findItem(id);
@@ -201,11 +273,13 @@
           scheduleSave(id, 250);
         }
         error = '';
+        if (recoveryOpen) scanBoardRecoveries();
       } catch (e) {
         dirty.add(id);
         error = String(e).includes('CONFLITO_QUADRO')
           ? 'Esse cartão foi alterado em outra janela. Seu rascunho local foi preservado; não o apague.'
           : 'Falha ao salvar cartão. Rascunho local preservado: ' + String(e);
+        scanBoardRecoveries();
       } finally {
         flights.delete(id);
       }
@@ -230,21 +304,28 @@
         try {
           const raw = localStorage.getItem(draftKey(item.id));
           if (!raw) return item;
-          const draft = JSON.parse(raw) as Partial<BoardItem>;
-          if (typeof draft.content !== 'string' || typeof draft.revision !== 'number') return item;
-          if (draft.revision !== item.revision) {
-            message = 'Rascunho conflitante preservado: os dados originais permanecem no SQLite.';
+          const state = boardDraftState(raw,item);
+          if (state==='conflict' || state==='invalid') {
+            message = 'Há um rascunho recuperável. A versão do SQLite não foi sobrescrita.';
             return item;
           }
-          const restored = { ...item, content: draft.content, x: Number(draft.x), y: Number(draft.y),
-            width: Number(draft.width), height: Number(draft.height) };
-          if (![restored.x,restored.y,restored.width,restored.height].every(Number.isFinite)) return item;
-          if (!sameFields(item, restored)) { dirty.add(item.id); scheduleSave(item.id); }
+          if (state!=='restore') return item;
+          if (!isOwnedOrLegacyDraft(raw)) {
+            message='Um rascunho de outra janela foi preservado para recuperação manual.';
+            return item;
+          }
+          const draft = parseBoardDraft(raw,item);
+          if (!draft) return item;
+          const restored = { ...item, content:draft.content,x:draft.x,y:draft.y,
+            width:draft.width,height:draft.height };
+          dirty.add(item.id);
+          scheduleSave(item.id);
           return restored;
         } catch { return item; }
       });
       connections = edges;
       references = Object.fromEntries(linked.map(ref => [ref.item_id, ref]));
+      scanBoardRecoveries(id);
       pickerOpen = false;
       selected = null;
       connectFrom = null;
@@ -650,6 +731,12 @@
   </div>
   {#if error}<div role="alert" class="re-board-alert"><span>{error}</span><button onclick={()=>error=''} aria-label="Fechar erro">×</button></div>{/if}
   {#if message}<div role="status" class="re-board-message"><span>{message}</span><button onclick={()=>message=''} aria-label="Fechar aviso">×</button></div>{/if}
+  {#if recoveries.length>0}
+    <div class="re-board-recovery-banner" role="status">
+      <span><Database size={15}/> {recoveries.length} {recoveries.length===1?'rascunho recuperável':'rascunhos recuperáveis'} neste quadro.</span>
+      <button onclick={()=>{scanBoardRecoveries();recoveryOpen=true;}}>Examinar cópias</button>
+    </div>
+  {/if}
   <div class="re-board-stage" bind:this={stage} tabindex="0" role="application" aria-label="Quadro visual: arraste o fundo para navegar, use a roda do mouse para aproximar"
     onpointerdown={startPan} onpointermove={pointerMove} onpointerup={pointerEnd} onpointercancel={pointerEnd}
     ondragover={event=>event.preventDefault()} ondrop={onDrop} onkeydown={boardShortcut}>
@@ -793,6 +880,44 @@
     {/if}
     <div class="re-board-help">Arraste para navegar · Roda: zoom · F: enquadrar · Ctrl+F: busca (quadro em foco)</div>
   </div>
+  {#if recoveryOpen}
+    <div class="re-board-modal-backdrop">
+      <div class="re-board-modal re-board-recovery-modal" role="dialog" aria-modal="true" aria-labelledby="re-board-recovery-title">
+        <div class="re-board-modal-head">
+          <div><span class="re-board-kicker">PROTEÇÃO DO SEU TRABALHO</span>
+            <h3 id="re-board-recovery-title">Recuperar rascunhos</h3>
+            <p>Examine cópias locais antes de descartá-las. O SQLite continua sendo a versão oficial.</p>
+          </div>
+          <button aria-label="Fechar recuperação" disabled={recoveryBusy} onclick={()=>recoveryOpen=false}><X size={19}/></button>
+        </div>
+        <div class="re-board-recovery-list">
+          {#if recoveries.length===0}
+            <p>Nenhuma cópia pendente neste quadro.</p>
+          {:else}
+            {#each recoveries as entry (entry.key)}
+              <div class="re-board-recovery-item">
+                <strong>{entry.status==='conflict'?'Revisão conflitante':entry.status==='orphan'?'Cartão removido':entry.status==='competing'?'Outra janela ou versão':'Rascunho não salvo'}</strong>
+                <small>{recoveryDescription(entry)}</small>
+                <textarea readonly aria-label="Conteúdo original do rascunho de recuperação"
+                  value={entry.snapshot?.content ?? entry.raw} rows="4"></textarea>
+                <div class="re-board-recovery-actions">
+                  {#if entry.snapshot && entry.snapshot.kind!=='image' && !references[entry.itemId]}
+                    <button disabled={recoveryBusy || switching || loading} onclick={()=>{void copyRecovery(entry);}}>
+                      <Plus size={14}/> Criar cartão com esta cópia
+                    </button>
+                  {:else}
+                    <span>Esta cópia só pode ser examinada; imagens e vínculos não são reconstruídos automaticamente.</span>
+                  {/if}
+                  <button class="re-board-recovery-discard" disabled={recoveryBusy || dirty.has(entry.itemId) || flights.has(entry.itemId)}
+                    onclick={()=>discardRecovery(entry)}><Trash2 size={13}/> Descartar cópia</button>
+                </div>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
   {#if pickerOpen}
     <div class="re-board-modal-backdrop">
       <div class="re-board-modal" role="dialog" aria-modal="true" aria-labelledby="re-board-picker-title">
@@ -847,6 +972,21 @@
   .re-board-tools button,.re-board-empty button{display:inline-flex;gap:7px;align-items:center;justify-content:center;background:#221d23;border:1px solid #4b353d;border-radius:9px;padding:9px 12px;color:#f4ecf0;font-size:12px;font-weight:650}
   .re-board-tools button:hover,.re-board-empty button:hover{background:#432330;border-color:#ae3854}
   .re-board-hidden{display:none}
+  .re-board-recovery-banner{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:8px 22px;background:#2e2224;color:#f8d5df;border-bottom:1px solid #7b4654;font-size:12px}
+  .re-board-recovery-banner span{display:flex;align-items:center;gap:8px}
+  .re-board-recovery-banner button{border:1px solid #ad6077;color:#ffe9f0;background:#442631;border-radius:7px;padding:7px 10px;font-size:11px;font-weight:700}
+  .re-board-recovery-modal{max-height:min(760px,90%)}
+  .re-board-recovery-list{display:flex;flex-direction:column;gap:10px;overflow-y:auto;padding:4px 18px 19px;min-height:80px}
+  .re-board-recovery-list>p{font-size:13px;color:#c7b8c4}
+  .re-board-recovery-item{display:flex;flex-direction:column;gap:7px;background:#211b23;border:1px solid #5b4654;border-radius:9px;padding:13px}
+  .re-board-recovery-item strong{font-size:13px}
+  .re-board-recovery-item small{font-size:11px;color:#b8a7b4}
+  .re-board-recovery-item textarea{resize:vertical;min-height:70px;width:100%;background:#111014;color:#f1e3ec;border:1px solid #50404d;border-radius:6px;padding:10px;line-height:1.4;font-size:12px}
+  .re-board-recovery-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .re-board-recovery-actions button{display:flex;align-items:center;gap:6px;background:#432532;border:1px solid #86536a;border-radius:6px;color:#ffdfeb;padding:8px;font-size:11px}
+  .re-board-recovery-actions .re-board-recovery-discard{margin-left:auto;background:#231c23;border-color:#534450;color:#cbbbc7}
+  .re-board-recovery-actions button:disabled{opacity:.45}
+  .re-board-recovery-actions span{font-size:11px;color:#b6a6b5}
   .re-board-search-panel{position:absolute;top:17px;left:17px;width:min(355px,calc(100% - 34px));max-height:min(430px,70%);display:flex;flex-direction:column;gap:9px;padding:13px;background:#18151dea;border:1px solid #5a4555;border-radius:12px;box-shadow:0 14px 35px #0009;z-index:4}
   .re-board-search-head{display:flex;align-items:center;justify-content:space-between;color:#f8e9f2}
   .re-board-search-head strong{display:flex;gap:7px;align-items:center;font-size:13px}
