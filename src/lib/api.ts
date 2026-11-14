@@ -51,7 +51,7 @@ export const focusApi = {
 };
 
 export const reviewApi = {
-  list: () => invoke<DailyReviewItem[]>('list_daily_review')
+  list: (hiddenKeys: string[] = []) => invoke<DailyReviewItem[]>('list_daily_review', { hiddenKeys })
 };
 
 export const linksApi = {
