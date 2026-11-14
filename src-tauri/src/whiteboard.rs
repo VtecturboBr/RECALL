@@ -260,6 +260,39 @@ mod tests {
     use std::fs;
 
 
+
+    #[tokio::test]
+    async fn upgrading_from_v8_keeps_cards_images_and_creates_one_backup() {
+        let folder=std::env::temp_dir().join(format!("recall-board-upgrade-{}",Uuid::new_v4()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path=folder.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let original=create(&pool,"default","image",10.0,20.0,"original",
+            Some("data:image/png;base64,AAAA")).await.unwrap();
+        // Reconstruct the exact v8 whiteboard schema while retaining the rest
+        // of the already-initialized production database.
+        sqlx::query("DROP TABLE whiteboard_connections").execute(&pool).await.unwrap();
+        sqlx::query("DROP TABLE whiteboards").execute(&pool).await.unwrap();
+        sqlx::query("DROP INDEX idx_whiteboard_by_board").execute(&pool).await.unwrap();
+        sqlx::query("ALTER TABLE whiteboard_items DROP COLUMN board_id").execute(&pool).await.unwrap();
+        sqlx::query("PRAGMA user_version=8").execute(&pool).await.unwrap();
+        pool.close().await;
+        let migrated=crate::db::connect(&path).await.unwrap();
+        let current=get(&migrated,&original.id).await.unwrap().unwrap();
+        assert_eq!(current.id,original.id);
+        assert_eq!(current.revision,original.revision);
+        assert_eq!(current.board_id,"default");
+        assert_eq!(asset(&migrated,&current.id).await.unwrap(),
+            Some("data:image/png;base64,AAAA".into()));
+        let backups=crate::db::list_backups(&path).unwrap();
+        assert!(backups.iter().any(|b|b.file_name.contains("pre-alpha10-1-boards")));
+        let backup_count=backups.len();
+        migrated.close().await;
+        let reopened=crate::db::connect(&path).await.unwrap();
+        assert_eq!(crate::db::list_backups(&path).unwrap().len(),backup_count);
+        reopened.close().await;
+        let _=std::fs::remove_dir_all(folder);
+    }
     #[tokio::test]
     async fn boards_connections_are_durable_isolated_and_reject_invalid_edges() {
         let folder=std::env::temp_dir().join(format!("recall-boards-v9-{}",Uuid::new_v4()));

@@ -430,7 +430,7 @@
     <div class="re-board-intro"><span class="re-board-kicker">SEU ESPAÇO VISUAL</span><strong>Quadros<span class="re-board-accent">.</span></strong><small>Organize suas ideias e conecte cartões.</small>
       <div class="re-board-picker"><label for="recall-board-select">Quadro atual</label>
         <select id="recall-board-select" value={activeBoardId} disabled={switching || loading}
-          onchange={(event)=>{const value=event.currentTarget.value;void switchBoard(value).finally(()=>{event.currentTarget.value=activeBoardId;});}}>
+          onchange={(event)=>{const element=event.currentTarget;const value=element.value;void switchBoard(value).finally(()=>{element.value=activeBoardId;});}}>
           {#each boards as board (board.id)}<option value={board.id}>{board.name}</option>{/each}
         </select>
         <button title="Criar novo quadro" aria-label="Criar novo quadro" disabled={switching} onclick={()=>{void newBoard();}}><Plus size={15}/></button>

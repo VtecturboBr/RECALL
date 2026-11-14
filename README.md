@@ -2,7 +2,7 @@
 
 **Sua memória externa para Windows:** notas, tarefas, ideias, lembretes locais, apresentações, foco, revisão diária e o novo Quadro Infinito.
 
-> **Nova versão experimental:** `0.5.0-alpha.10.0` — primeiro Quadro Infinito offline. Esta branch ainda requer CI e teste visual manual no Windows. **Não é uma versão estável.** Não há sincronização Android nem contas remotas.
+> **Nova versão experimental:** `0.5.0-alpha.10.1` — vários quadros independentes e conexões entre cartões. CI e validação visual Windows ainda são necessárias. **Não é uma versão estável.** Sem sincronização Android.
 
 ## O que o aplicativo oferece
 
@@ -13,6 +13,12 @@
 - **Captura Rápida:** janela global `Ctrl+Shift+Espaço` enquanto o RECALL está em execução, inclusive na bandeja; cria ideias e tarefas.
 - **Lembretes 2.0:** notificações genéricas (sem título privado na tela bloqueada), recorrência, adiamento e recuperação de lembretes vencidos.
 - **Armazenamento local:** SQLite com WAL, revisões concorrentes para dados textuais, exclusão lógica, históricos internos e snapshots verificados.
+
+## Alpha 10.1 — Vários quadros e conexões
+
+O seletor no topo do Quadro permite criar e renomear espaços independentes. Cada cartão fica associado ao seu quadro; o conteúdo existente da Alpha 10.0 migra para **Meu quadro** sem ser descartado. No cabeçalho de cada cartão, selecione **Conectar** e depois **Conectar** em outro cartão para criar uma seta persistente. Ao selecionar um cartão, suas conexões podem ser removidas na lista lateral.
+
+A migração aditiva para SQLite **v9** exige backup verificado `pre-alpha10-1-boards` ao atualizar instalações v8; não faça downgrade direto para Alpha 10.0. Veja [documentação de validação](docs/ALPHA10_1_QUADROS_CONEXOES.md).
 
 ## Alpha 10 — Quadro Infinito
 
@@ -42,7 +48,7 @@ Esta atualização corrige erros encontrados na auditoria da Alpha 9.2:
 1. Feche o RECALL completamente pelo ícone da bandeja do sistema.
 2. Faça uma cópia integral da pasta `%APPDATA%\app.memoriaexterna.desktop`. Para testar migrações, prefira uma **conta Windows de teste** e uma **cópia** dos dados, não o banco principal.
 3. Abra [GitHub Actions do RECALL](https://github.com/VtecturboBr/RECALL/actions/workflows/windows-installer.yml).
-4. Selecione o run da branch `feature/v0.5-alpha10-quadro-infinito` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-quadro-Windows-x64`.
+4. Selecione o run da branch `feature/v0.5-alpha10-1-quadros-conexoes` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-1-quadros-conexoes-Windows-x64`.
 5. Extraia o ZIP, compare o SHA-256 do `.exe` com `SHA256SUMS.txt` e instale. Consulte [guia do instalador](docs/INSTALADOR_WINDOWS.md).
 
 O instalador é prévia **não assinada digitalmente**. Nenhum merge automático é feito na `main`.
