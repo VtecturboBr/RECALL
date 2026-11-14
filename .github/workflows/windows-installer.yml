@@ -24,6 +24,7 @@ on:
       - 'feature/v0.5-alpha10-3-navegacao-quadro'
       - 'fix/alpha10-4-recuperacao-rascunhos'
       - 'feature/v0.5-alpha10-5-historico-seguro'
+      - 'feature/v0.5-alpha11-quadro-escalavel'
   workflow_dispatch:
 
 permissions:
@@ -88,7 +89,7 @@ jobs:
       - name: Publicar instalador para download
         uses: actions/upload-artifact@v4
         with:
-          name: RECALL-v0.5-alpha10-5-historico-seguro-Windows-x64
+          name: RECALL-v0.5-alpha11-quadro-escalavel-Windows-x64
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/bundle/nsis/SHA256SUMS.txt
