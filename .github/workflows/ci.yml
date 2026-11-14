@@ -33,7 +33,7 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
       - name: Instalar dependencias web
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Verificar Svelte e TypeScript
         run: npm run check
       - name: Configurar Python para testes de restauração
@@ -47,6 +47,6 @@ jobs:
       - name: Compilar frontend
         run: npm run build
       - name: Verificar Rust/Tauri
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
       - name: Testes de unidade Rust
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
