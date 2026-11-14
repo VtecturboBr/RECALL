@@ -109,7 +109,7 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await?;
     let starting_version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await?;
-    if starting_version > 7 {
+    if starting_version > 8 {
         return Err(sqlx::Error::Protocol(
             "Banco de dados criado por versão mais recente do RECALL; atualização necessária".into()
         ));
@@ -134,6 +134,11 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
         create_backup(&pool, path, "pre-alpha9-links").await.map_err(|e|
             sqlx::Error::Protocol(format!("Backup obrigatório pré-Alpha 9.1 falhou: {e}"))
         )?;
+    }
+    // Protect all previously existing content before the additive whiteboard migration.
+    if starting_version < 8 && existing_user_tables > 0 {
+        create_backup(&pool,path,"pre-alpha10-board").await.map_err(|e|
+            sqlx::Error::Protocol(format!("Backup pré-Quadro falhou: {e}")))?;
     }
     // On upgrades, the first integrity-schema change is preceded by a verified
     // snapshot. New databases do not need a pre-migration backup.
@@ -225,6 +230,8 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
         crate::links::migrate_v7(&pool).await?;
     }
     crate::links::verify_v7(&pool).await?;
+    if starting_version < 8 { crate::whiteboard::migrate_v8(&pool).await?; }
+    crate::whiteboard::verify_v8(&pool).await?;
     Ok(pool)
 }
 
@@ -360,10 +367,11 @@ mod integrity_tests {
         assert_eq!(first.title, "Meu texto");
         assert_eq!(first.body, "Preservar");
         let backups = list_backups(&path).unwrap();
-        assert_eq!(backups.len(), 4, "each legacy upgrade needs its own verified snapshot");
+        assert_eq!(backups.len(), 5, "each legacy upgrade needs its own verified snapshot");
         assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha8") && b.size_bytes > 0));
         assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha9") && b.size_bytes > 0));
         assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha9-links") && b.size_bytes > 0));
+        assert!(backups.iter().any(|b| b.file_name.contains("pre-alpha10-board") && b.size_bytes > 0));
         assert!(backups.iter().any(|b| b.file_name.contains("pre-integrity") && b.size_bytes > 0));
 
         let changed = save(&pool, "old", "Revisado", "Conteúdo", 0).await.unwrap().unwrap();

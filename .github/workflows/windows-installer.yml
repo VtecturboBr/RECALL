@@ -18,6 +18,7 @@ on:
       - 'feature/v0.5-alpha9-2-revisao-diaria'
       - 'fix/alpha9-2-1-estabilidade-integridade'
       - 'fix/alpha9-2-1-consolidacao-validacao'
+      - 'feature/v0.5-alpha10-quadro-infinito'
   workflow_dispatch:
 
 permissions:
@@ -82,7 +83,7 @@ jobs:
       - name: Publicar instalador para download
         uses: actions/upload-artifact@v4
         with:
-          name: RECALL-v0.5-alpha9-2-1-estabilidade-Windows-x64
+          name: RECALL-v0.5-alpha10-quadro-Windows-x64
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/bundle/nsis/SHA256SUMS.txt

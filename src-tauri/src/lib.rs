@@ -6,6 +6,7 @@ mod history;
 mod focus;
 mod links;
 mod review;
+mod whiteboard;
 
 use sqlx::SqlitePool;
 use tauri::{Emitter, Manager};
@@ -371,6 +372,46 @@ async fn remove_item_link(
     Ok(())
 }
 
+
+#[tauri::command]
+async fn list_board_items(state: tauri::State<'_, AppState>) -> Result<Vec<whiteboard::BoardItem>, String> {
+    whiteboard::list(&state.pool).await.map_err(|e|e.to_string())
+}
+#[tauri::command]
+async fn create_board_item(
+    state: tauri::State<'_, AppState>, app: tauri::AppHandle,
+    kind: String,x: f64,y: f64,content: String,asset_data_url: Option<String>
+) -> Result<whiteboard::BoardItem,String> {
+    let item=whiteboard::create(&state.pool,&kind,x,y,&content,asset_data_url.as_deref()).await?;
+    let _=app.emit("board:changed",&item.id);
+    Ok(item)
+}
+#[tauri::command]
+async fn update_board_item(
+    state: tauri::State<'_, AppState>,app: tauri::AppHandle,
+    id: String,x: f64,y: f64,width: f64,height: f64,content: String,expected_revision: i64
+) -> Result<whiteboard::BoardItem,String> {
+    let item=whiteboard::update(&state.pool,&id,x,y,width,height,&content,expected_revision).await?
+        .ok_or_else(||"CONFLITO_QUADRO: cartão alterado em outra janela".to_string())?;
+    let _=app.emit("board:changed",&item.id);
+    Ok(item)
+}
+#[tauri::command]
+async fn delete_board_item(
+    state: tauri::State<'_, AppState>,app: tauri::AppHandle,
+    id: String,expected_revision: i64
+) -> Result<(),String> {
+    if !whiteboard::delete(&state.pool,&id,expected_revision).await? {
+        return Err("CONFLITO_QUADRO: cartão alterado em outra janela".into());
+    }
+    let _=app.emit("board:changed",&id);
+    Ok(())
+}
+#[tauri::command]
+async fn get_board_asset(state: tauri::State<'_, AppState>,id: String) -> Result<Option<String>,String> {
+    whiteboard::asset(&state.pool,&id).await.map_err(|e|e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -379,6 +420,7 @@ pub fn run() {
             get_active_focus, list_focus_sessions, start_focus_session, heartbeat_focus_session, stop_focus_session,
             list_item_links, add_item_link, remove_item_link,
             list_daily_review,
+            list_board_items,create_board_item,update_board_item,delete_board_item,get_board_asset,
             set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task,
             list_reminders, list_reminder_events, schedule_reminder, cancel_reminder,
             snooze_reminder, acknowledge_reminder])

@@ -194,7 +194,7 @@ mod tests {
 
         let upgraded = db::connect(&path).await.unwrap();
         let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&upgraded).await.unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version,8);
         assert_eq!(db::get(&upgraded, &note.id).await.unwrap().unwrap().body, note.body);
         assert_eq!(tasks::get(&upgraded, &task.id).await.unwrap().unwrap().title, "Trabalho de faculdade");
         assert_eq!(inbox::get(&upgraded, &idea.id).await.unwrap().unwrap().text, "Ideia com acento: ação");
@@ -203,10 +203,11 @@ mod tests {
             .fetch_one(&upgraded).await.unwrap();
         assert_eq!(history_count, 4);
         let backup_count = db::list_backups(&path).unwrap();
-        assert_eq!(backup_count.len(), 3);
+        assert_eq!(backup_count.len(), 4);
         assert!(backup_count.iter().any(|b| b.file_name.contains("pre-alpha8")));
         assert!(backup_count.iter().any(|b| b.file_name.contains("pre-alpha9")));
         assert!(backup_count.iter().any(|b| b.file_name.contains("pre-alpha9-links")));
+        assert!(backup_count.iter().any(|b| b.file_name.contains("pre-alpha10-board")));
         let check: String = sqlx::query_scalar("PRAGMA quick_check").fetch_one(&upgraded).await.unwrap();
         assert_eq!(check, "ok");
         upgraded.close().await;

@@ -1,6 +1,19 @@
 import { invoke } from '@tauri-apps/api/core';
 import { shouldClearFocusDraft } from './focusDraftSafety';
-import type { Note, Task, TaskResume, FocusSession, ItemLink, DailyReviewItem, InboxItem, Reminder, ReminderEvent, ReminderRule } from './types';
+import type { Note, Task, TaskResume, FocusSession, ItemLink, DailyReviewItem, InboxItem, Reminder, ReminderEvent, ReminderRule, BoardItem, BoardKind } from './types';
+
+export const boardApi = {
+  list: () => invoke<BoardItem[]>('list_board_items'),
+  create: (kind: BoardKind,x: number,y: number,content: string,assetDataUrl?: string) =>
+    invoke<BoardItem>('create_board_item',{kind,x,y,content,assetDataUrl}),
+  update: (item: BoardItem) => invoke<BoardItem>('update_board_item',{
+    id:item.id,x:item.x,y:item.y,width:item.width,height:item.height,
+    content:item.content,expectedRevision:item.revision
+  }),
+  remove: (id: string,expectedRevision: number) =>
+    invoke<void>('delete_board_item',{id,expectedRevision}),
+  asset: (id: string) => invoke<string | null>('get_board_asset',{id})
+};
 
 export const notesApi = {
   list: () => invoke<Note[]>('list_notes'),
