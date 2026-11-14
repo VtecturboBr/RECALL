@@ -17,16 +17,6 @@ pub struct ItemLink {
     pub created_at: i64,
 }
 
-#[derive(Debug, FromRow)]
-struct LinkRow {
-    id: String,
-    left_type: String,
-    left_id: String,
-    right_type: String,
-    right_id: String,
-    created_at: i64,
-}
-
 pub async fn migrate_v7(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("CREATE TABLE item_links (
@@ -121,39 +111,37 @@ pub async fn remove(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// A 50-item bound prevents huge IPC payloads or N+1 loading in the inspector.
-/// Links to processed/excluded items stay in SQLite for later restoration.
-pub async fn list(pool: &SqlitePool, kind: &str, id: &str) -> Result<Vec<ItemLink>,sqlx::Error> {
+/// Select only live destinations *before* LIMIT and resolve them in one query.
+/// This keeps 50 deleted newer associations from obscuring older valid links.
+pub async fn list(pool: &SqlitePool, kind: &str, id: &str) -> Result<Vec<ItemLink>, sqlx::Error> {
     validate_endpoint(kind,id)?;
-    if !exists_active(pool,kind,id).await? {return Err(sqlx::Error::RowNotFound);}
-    let rows=sqlx::query_as::<_,LinkRow>(&format!(
-        "SELECT {LINK_FIELDS} FROM item_links
-         WHERE (left_type=? AND left_id=?) OR (right_type=? AND right_id=?)
-         ORDER BY created_at DESC,id DESC LIMIT 50"))
-        .bind(kind).bind(id).bind(kind).bind(id).fetch_all(pool).await?;
-    let mut entries=Vec::with_capacity(rows.len());
-    for row in rows {
-        let (other_type,other_id)=if row.left_type==kind && row.left_id==id {
-            (row.right_type,row.right_id)
-        } else {(row.left_type,row.left_id)};
-        let data:Option<(String,String)>=match other_type.as_str(){
-            "note"=>sqlx::query_as("SELECT COALESCE(NULLIF(TRIM(title),''),'Sem título'),
-                    SUBSTR(body,1,180) FROM notes WHERE id=? AND deleted_at IS NULL")
-                .bind(&other_id).fetch_optional(pool).await?,
-            "task"=>sqlx::query_as("SELECT title,SUBSTR(details,1,180) FROM tasks
-                    WHERE id=? AND deleted_at IS NULL")
-                .bind(&other_id).fetch_optional(pool).await?,
-            "idea"=>sqlx::query_as("SELECT SUBSTR(text,1,90),SUBSTR(text,1,180)
-                    FROM inbox_items WHERE id=? AND processed_at IS NULL")
-                .bind(&other_id).fetch_optional(pool).await?,
-            _=>None,
-        };
-        if let Some((title,preview))=data{
-            entries.push(ItemLink{id:row.id,item_type:other_type,item_id:other_id,
-                title,preview,created_at:row.created_at});
-        }
-    }
-    Ok(entries)
+    if !exists_active(pool,kind,id).await? { return Err(sqlx::Error::RowNotFound); }
+    sqlx::query_as::<_,ItemLink>(
+        "WITH endpoints AS (
+          SELECT l.id, l.created_at,
+            CASE WHEN l.left_type=? AND l.left_id=? THEN l.right_type ELSE l.left_type END AS item_type,
+            CASE WHEN l.left_type=? AND l.left_id=? THEN l.right_id ELSE l.left_id END AS item_id
+          FROM item_links l
+          WHERE (l.left_type=? AND l.left_id=?) OR (l.right_type=? AND l.right_id=?)
+        )
+        SELECT e.id,e.item_type,e.item_id,e.created_at,
+          CASE e.item_type
+            WHEN 'note' THEN COALESCE(NULLIF(TRIM(n.title),''),'Sem título')
+            WHEN 'task' THEN t.title ELSE SUBSTR(i.text,1,90) END AS title,
+          CASE e.item_type
+            WHEN 'note' THEN SUBSTR(n.body,1,180)
+            WHEN 'task' THEN SUBSTR(t.details,1,180)
+            ELSE SUBSTR(i.text,1,180) END AS preview
+        FROM endpoints e
+        LEFT JOIN notes n ON e.item_type='note' AND n.id=e.item_id AND n.deleted_at IS NULL
+        LEFT JOIN tasks t ON e.item_type='task' AND t.id=e.item_id AND t.deleted_at IS NULL
+        LEFT JOIN inbox_items i ON e.item_type='idea' AND i.id=e.item_id AND i.processed_at IS NULL
+        WHERE (e.item_type='note' AND n.id IS NOT NULL)
+           OR (e.item_type='task' AND t.id IS NOT NULL)
+           OR (e.item_type='idea' AND i.id IS NOT NULL)
+        ORDER BY e.created_at DESC,e.id DESC LIMIT 50"
+    ).bind(kind).bind(id).bind(kind).bind(id).bind(kind).bind(id).bind(kind).bind(id)
+        .fetch_all(pool).await
 }
 
 #[cfg(test)]
@@ -249,6 +237,26 @@ mod tests {
             .bind(&task.id).fetch_one(&inspect).await.unwrap();
         assert_eq!(title,"Preservado");
         inspect.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn ignores_deleted_links_before_limiting_fifty_live_destinations() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let root=tasks::create(&pool,"Origem").await.unwrap();
+        for n in 0..10 {
+            let item=db::create_copy(&pool,&format!("Ativa {n}"),"Corpo","note").await.unwrap();
+            add(&pool,"task",&root.id,"note",&item.id).await.unwrap();
+        }
+        for n in 0..60 {
+            let item=db::create_copy(&pool,&format!("Oculta {n}"),"Corpo","note").await.unwrap();
+            add(&pool,"task",&root.id,"note",&item.id).await.unwrap();
+            db::delete(&pool,&item.id).await.unwrap();
+        }
+        let links=list(&pool,"task",&root.id).await.unwrap();
+        assert_eq!(links.len(),10,"deleted newest links cannot hide older live links");
+        assert!(links.iter().all(|row|row.title.starts_with("Ativa ")));
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

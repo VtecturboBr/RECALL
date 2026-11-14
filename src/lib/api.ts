@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { shouldClearFocusDraft } from './focusDraftSafety';
 import type { Note, Task, TaskResume, FocusSession, ItemLink, DailyReviewItem, InboxItem, Reminder, ReminderEvent, ReminderRule } from './types';
 
 export const notesApi = {
@@ -25,6 +26,23 @@ export function toLocalInput(timestamp: number | null): string {
 }
 
 
+type FocusDraft = { id: string; raw: string; summary: string };
+async function focusDraftForTask(taskId: string): Promise<FocusDraft | null> {
+  const active = await invoke<FocusSession | null>('get_active_focus');
+  if (!active || active.task_id !== taskId) return null;
+  try {
+    const raw = localStorage.getItem('recall-focus-summary:' + active.id);
+    return raw === null ? null : { id: active.id, raw, summary: raw.slice(0, 2000) };
+  } catch { return null; }
+}
+function clearFocusDraftIfUnchanged(draft: FocusDraft | null) {
+  if (!draft) return;
+  try {
+    const key = 'recall-focus-summary:' + draft.id;
+    if (shouldClearFocusDraft(draft.raw, localStorage.getItem(key))) localStorage.removeItem(key);
+  } catch { /* Keep draft for manual recovery. */ }
+}
+
 export const tasksApi = {
   list: () => invoke<Task[]>('list_tasks'),
   create: (title: string) => invoke<Task>('create_task', { title }),
@@ -37,8 +55,21 @@ export const tasksApi = {
   getResume: (taskId: string) => invoke<TaskResume | null>('get_task_resume', { taskId }),
   saveResume: (taskId: string, lastContext: string, nextStep: string, expectedRevision: number) =>
     invoke<TaskResume>('save_task_resume', { taskId, lastContext, nextStep, expectedRevision }),
-  complete: (id: string, completed: boolean) => invoke<Task>('set_task_completed', { id, completed }),
-  delete: (id: string) => invoke<void>('delete_task', { id })
+  complete: async (id: string, completed: boolean, focusSummary?: string) => {
+    const draft = completed ? await focusDraftForTask(id) : null;
+    const task = await invoke<Task>('set_task_completed', {
+      id, completed, focusSummary: focusSummary ?? draft?.summary ?? null
+    });
+    if (completed) clearFocusDraftIfUnchanged(draft);
+    return task;
+  },
+  delete: async (id: string, focusSummary?: string) => {
+    const draft = await focusDraftForTask(id);
+    await invoke<void>('delete_task', {
+      id, focusSummary: focusSummary ?? draft?.summary ?? null
+    });
+    clearFocusDraftIfUnchanged(draft);
+  }
 };
 
 export const focusApi = {
@@ -51,7 +82,7 @@ export const focusApi = {
 };
 
 export const reviewApi = {
-  list: () => invoke<DailyReviewItem[]>('list_daily_review')
+  list: (hiddenKeys: string[] = []) => invoke<DailyReviewItem[]>('list_daily_review', { hiddenKeys })
 };
 
 export const linksApi = {

@@ -23,7 +23,7 @@ pub struct ReviewItem {
 struct ReviewTask {
     id: String,
     title: String,
-    details: String,
+    has_details: i64,
     due_at: Option<i64>,
     created_at: i64,
     updated_at: i64,
@@ -39,8 +39,14 @@ struct ReviewTask {
 pub async fn list(pool: &SqlitePool) -> Result<Vec<ReviewItem>, sqlx::Error> {
     list_at(pool, now_ms()).await
 }
-
+pub async fn list_excluding(pool: &SqlitePool, keys: &[String]) -> Result<Vec<ReviewItem>, sqlx::Error> {
+    let excluded: HashSet<&str> = keys.iter().map(String::as_str).collect();
+    list_at_filtered(pool, now_ms(), &excluded).await
+}
 async fn list_at(pool: &SqlitePool, now: i64) -> Result<Vec<ReviewItem>, sqlx::Error> {
+    list_at_filtered(pool, now, &HashSet::new()).await
+}
+async fn list_at_filtered(pool: &SqlitePool, now: i64, excluded: &HashSet<&str>) -> Result<Vec<ReviewItem>, sqlx::Error> {
     let mut ranked: Vec<(u8, ReviewItem)> = Vec::new();
     let mut seen: HashSet<(String, String)> = HashSet::new();
 
@@ -66,7 +72,7 @@ async fn list_at(pool: &SqlitePool, now: i64) -> Result<Vec<ReviewItem>, sqlx::E
     // One query for all open tasks, and a subquery for each task's *latest*
     // focus session. An earlier pause cannot override a newer finished session.
     let rows: Vec<ReviewTask> = sqlx::query_as(
-        "SELECT t.id,t.title,t.details,t.due_at,t.created_at,t.updated_at,
+        "SELECT t.id,t.title,CASE WHEN LENGTH(TRIM(t.details))>0 THEN 1 ELSE 0 END AS has_details,t.due_at,t.created_at,t.updated_at,
                 COALESCE(p.bucket,'today') AS bucket,p.planned_for,
                 COALESCE(s.next_step,'') AS next_step,
                 f.state AS focus_state,
@@ -90,7 +96,7 @@ async fn list_at(pool: &SqlitePool, now: i64) -> Result<Vec<ReviewItem>, sqlx::E
         let overdue = task.due_at.filter(|at| *at < now);
         let activity_at = task.updated_at.max(task.focus_at.unwrap_or(0));
         let age_ms = now.saturating_sub(activity_at);
-        let missing_step = task.details.trim().is_empty() && task.next_step.trim().is_empty();
+        let missing_step = task.has_details == 0 && task.next_step.trim().is_empty();
         let choice: Option<(u8, &str, &str, i64)> = if let Some(due_at) = overdue {
             Some((1, "overdue_task", "O prazo registrado passou. Confira a tarefa.", due_at))
         } else if !postponed && matches!(task.focus_state.as_deref(),Some("paused" | "interrupted")) {
@@ -116,7 +122,10 @@ async fn list_at(pool: &SqlitePool, now: i64) -> Result<Vec<ReviewItem>, sqlx::E
         .then(a.occurred_at.cmp(&b.occurred_at))
         .then(a.target_type.cmp(&b.target_type))
         .then(a.target_id.cmp(&b.target_id)));
-    Ok(ranked.into_iter().take(REVIEW_LIMIT).map(|(_,entry)|entry).collect())
+    Ok(ranked.into_iter()
+        .map(|(_,entry)| entry)
+        .filter(|entry| !excluded.contains(format!("{}:{}:{}",entry.target_type,entry.target_id,entry.kind).as_str()))
+        .take(REVIEW_LIMIT).collect())
 }
 
 #[cfg(test)]
@@ -233,6 +242,27 @@ mod tests {
         assert_eq!(list_at(&pool,now).await.unwrap().len(),2);
         pool.close().await;
         let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn hidden_top_twelve_are_replaced_by_next_eight() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let now=db::now_ms();
+        for n in 0..20 {
+            let t=tasks::create(&pool,&format!("Pendência {n}")).await.unwrap();
+            sqlx::query("UPDATE tasks SET created_at=?,updated_at=? WHERE id=?")
+                .bind(now-8*DAY_MS).bind(now-8*DAY_MS).bind(&t.id)
+                .execute(&pool).await.unwrap();
+        }
+        let first=list_at(&pool,now).await.unwrap();
+        assert_eq!(first.len(),12);
+        let keys:HashSet<String>=first.iter().map(|x|format!("{}:{}:{}",x.target_type,x.target_id,x.kind)).collect();
+        let excluded:HashSet<&str>=keys.iter().map(String::as_str).collect();
+        let second=list_at_filtered(&pool,now,&excluded).await.unwrap();
+        assert_eq!(second.len(),8);
+        assert!(second.iter().all(|x| !keys.contains(&format!("{}:{}:{}",x.target_type,x.target_id,x.kind))));
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

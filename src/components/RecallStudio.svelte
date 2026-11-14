@@ -7,15 +7,17 @@
     ChevronRight, X, Trash2, ArrowRight, Menu, RotateCcw, Target, ShieldCheck, AlarmClock, Repeat2, CheckCheck,
     Command, ArrowUpRight, CalendarDays, MoreHorizontal, Pin, Sparkles, LayoutGrid, Clock3, Inbox, Keyboard, PanelLeftClose, PanelLeftOpen, Coffee, CheckCircle2, Sun, NotebookPen
   } from 'lucide-svelte';
-  import { notesApi, tasksApi, inboxApi, backupsApi, remindersApi, formatDateTime, toLocalInput } from '../lib/api';
+  import { notesApi, tasksApi, inboxApi, backupsApi, remindersApi, focusApi, formatDateTime, toLocalInput } from '../lib/api';
   import { openQuickCapture, openSticky } from '../lib/windows';
   import TaskResume from './TaskResume.svelte';
   import FocusSession from './FocusSession.svelte';
   import LinkedItems from './LinkedItems.svelte';
   import DailyReview from './DailyReview.svelte';
+  import ActiveFocusBar from './ActiveFocusBar.svelte';
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../lib/editorSafety';
+  import { saveOwnedDraft, discardOwnedDraft } from '../lib/draftOwnership';
   import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
 
   type View = 'now' | 'archive';
@@ -76,12 +78,12 @@
   function preserveNoteDraft() {
     if (!draftNoteId) return;
     try {
-      localStorage.setItem(draftKey(draftNoteId),
-        JSON.stringify({title:noteTitle,body:noteBody,revision:noteRevision}));
+      saveOwnedDraft(draftKey(draftNoteId),
+        {title:noteTitle,body:noteBody,revision:noteRevision});
     } catch { /* Database save remains authoritative; storage may be full. */ }
   }
   function discardLocalDraftByKey(key: string) {
-    try { localStorage.removeItem(key); } catch { /* Storage unavailable. */ }
+    try { discardOwnedDraft(key); } catch { /* Storage unavailable. */ }
   }
   function discardLocalDraft(id: string) { discardLocalDraftByKey(draftKey(id)); }
   let noteSaving = $state(false);
@@ -97,7 +99,7 @@
   function ideaDraftKey(id: string) { return 'recall-idea-draft:' + id; }
   function preserveIdeaDraft() {
     if (!draftIdeaId) return;
-    try { localStorage.setItem(ideaDraftKey(draftIdeaId), JSON.stringify({ text: ideaText, revision: ideaRevision })); }
+    try { saveOwnedDraft(ideaDraftKey(draftIdeaId), { text: ideaText, revision: ideaRevision }); }
     catch { /* Writing to SQLite remains authoritative. */ }
   }
   let ideaSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -114,9 +116,9 @@
   function taskDraftKey(id: string) { return 'recall-task-draft:' + id; }
   function preserveTaskDraft() {
     if (!draftTaskId) return;
-    try { localStorage.setItem(taskDraftKey(draftTaskId), JSON.stringify({
+    try { saveOwnedDraft(taskDraftKey(draftTaskId), {
       title: taskTitle, details: taskDetails, due: taskDue, revision: taskRevision
-    })); } catch { /* Writing to SQLite remains authoritative. */ }
+    }); } catch { /* Writing to SQLite remains authoritative. */ }
   }
   let taskSaveTimer: ReturnType<typeof setTimeout> | undefined;
   let taskSaveInFlight: Promise<boolean> | null = null;
@@ -603,8 +605,9 @@
     if (selected?.type === 'task' && selected.task.id === task.id && !(await flushDraft())) return;
     busy = true;
     try {
-      await tasksApi.complete(task.id, task.completed_at === null);
-      if (task.completed_at === null && task.id === focusedTaskId) clearFocus();
+      const finishing = task.completed_at === null;
+      await tasksApi.complete(task.id, finishing);
+      if (finishing && task.id === focusedTaskId) clearFocus();
       await refresh();
     } catch (e) { error = 'Falha ao alterar tarefa: ' + String(e); }
     finally { busy = false; }
@@ -693,11 +696,11 @@
         await openEntry('idea:' + created.id);
       } else if (entry.type === 'task') {
         const dueAt = taskDue ? new Date(taskDue).getTime() : null;
-        if (!taskTitle.trim() || (dueAt !== null && !Number.isFinite(dueAt))) {
+        if (taskTitleForSave(taskTitle).length > 250 || (dueAt !== null && !Number.isFinite(dueAt))) {
           throw new Error('Verifique o título e a data antes de criar a cópia.');
         }
         const created = await tasksApi.createPlanned(
-          taskTitle, taskDetails, entry.task.bucket, entry.task.planned_for, dueAt
+          taskTitleForSave(taskTitle), taskDetails, entry.task.bucket, entry.task.planned_for, dueAt
         );
         discardLocalDraftByKey(taskDraftKey(entry.task.id));
         taskDirty = false; taskConflict = false;
@@ -714,12 +717,21 @@
   }
 
   async function createBackup() {
-    if (backupBusy || !(await flushDraft())) return;
+    if (backupBusy) return;
+    const saved = await flushDraft();
+    // SQLite backup captures committed data. Uncommitted editor drafts stay in
+    // localStorage; a conflict must not prevent securing the last good database.
+    if (!saved) {
+      preserveNoteDraft();
+      preserveTaskDraft();
+      preserveIdeaDraft();
+    }
     backupBusy = true;
     backupMessage = '';
     try {
       const file = await backupsApi.create();
-      backupMessage = 'Backup verificado: ' + file.file_path;
+      backupMessage = 'Backup verificado: ' + file.file_path +
+        (saved ? '' : ' · Atenção: edições pendentes/conflitantes ficaram nos rascunhos locais e NÃO estão neste backup.');
     } catch (e) { error = 'Falha ao criar backup: ' + String(e); }
     finally { backupBusy = false; }
   }
@@ -916,6 +928,7 @@
 
 <div class="re-app" class:re-collapsed={!sidebarVisible}>
   <button type="button" class="re-sidebar-backdrop" aria-label="Fechar menu lateral" onclick={() => sidebarVisible = false}></button>
+  <ActiveFocusBar onOpen={(taskId) => { void archiveEntry('task:' + taskId); }}/>
   <aside class="re-sidebar" aria-label="Navegação do RECALL">
     <div class="re-brand">
       <div class="re-brand-mark" aria-hidden="true"><BrainCircuit size={22} strokeWidth={1.8}/></div>

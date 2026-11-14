@@ -133,6 +133,10 @@ pub async fn update(pool: &SqlitePool, id: &str, title: &str, details: &str, due
 }
 
 pub async fn set_completed(pool: &SqlitePool, id: &str, completed: bool) -> Result<Task, sqlx::Error> {
+    set_completed_with_summary(pool, id, completed, None).await
+}
+
+pub async fn set_completed_with_summary(pool: &SqlitePool, id: &str, completed: bool, summary: Option<&str>) -> Result<Task, sqlx::Error> {
     let at = if completed { Some(now_ms()) } else { None };
     let mut tx = pool.begin().await?;
     let updated = sqlx::query("UPDATE tasks SET completed_at=?,updated_at=? WHERE id=? AND deleted_at IS NULL")
@@ -140,7 +144,7 @@ pub async fn set_completed(pool: &SqlitePool, id: &str, completed: bool) -> Resu
     if updated.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
     if completed {
         reminders::cancel_in_tx(&mut tx, "task", id).await?;
-        crate::focus::finish_task_in_tx(&mut tx, id).await?;
+        crate::focus::finish_task_with_summary_in_tx(&mut tx, id, summary).await?;
     }
     tx.commit().await?;
     get(pool, id).await?.ok_or(sqlx::Error::RowNotFound)
@@ -172,13 +176,16 @@ pub async fn save_resume(
 }
 
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    delete_with_summary(pool,id,None).await
+}
+pub async fn delete_with_summary(pool: &SqlitePool, id: &str, summary: Option<&str>) -> Result<(), sqlx::Error> {
     let now = now_ms();
     let mut tx = pool.begin().await?;
     let updated = sqlx::query("UPDATE tasks SET deleted_at=?,updated_at=? WHERE id=? AND deleted_at IS NULL")
         .bind(now).bind(now).bind(id).execute(&mut *tx).await?;
     if updated.rows_affected() == 0 { return Err(sqlx::Error::RowNotFound); }
     reminders::cancel_in_tx(&mut tx, "task", id).await?;
-    crate::focus::finish_task_in_tx(&mut tx, id).await?;
+    crate::focus::finish_task_with_summary_in_tx(&mut tx, id, summary).await?;
     tx.commit().await
 }
 
@@ -324,6 +331,38 @@ mod planning_tests {
         let rev: i64=sqlx::query_scalar("PRAGMA user_version").fetch_one(&reopened).await.unwrap();
         assert_eq!(rev,7);
         reopened.close().await; let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn closing_task_preserves_focus_summary_transactionally() {
+        let dir=test_dir();let path=dir.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let task=super::create(&pool,"Preservar progresso").await.unwrap();
+        let session=crate::focus::start(&pool,&task.id).await.unwrap();
+        super::set_completed_with_summary(&pool,&task.id,true,Some("Resumo que estava em edição"))
+            .await.unwrap();
+        let history=crate::focus::history(&pool,&task.id).await.unwrap();
+        let saved=history.iter().find(|row|row.id==session.id).unwrap();
+        assert_eq!(saved.state,"interrupted");
+        assert_eq!(saved.summary,"Resumo que estava em edição");
+        assert!(super::get(&pool,&task.id).await.unwrap().unwrap().completed_at.is_some());
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn deleting_task_preserves_focus_summary_without_erasing_task_data() {
+        let dir=test_dir();let path=dir.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let task=super::create(&pool,"Guardar tudo").await.unwrap();
+        crate::focus::start(&pool,&task.id).await.unwrap();
+        super::delete_with_summary(&pool,&task.id,Some("Progresso da tarefa removida"))
+            .await.unwrap();
+        let history=crate::focus::history(&pool,&task.id).await.unwrap();
+        assert_eq!(history[0].summary,"Progresso da tarefa removida");
+        let stored:String=sqlx::query_scalar("SELECT title FROM tasks WHERE id=?")
+            .bind(&task.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(stored,"Guardar tudo");
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

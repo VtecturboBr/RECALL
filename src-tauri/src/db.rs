@@ -87,6 +87,21 @@ pub fn list_backups(db_path: &Path) -> Result<Vec<BackupInfo>, String> {
 
 
 pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
+    // Fail closed if a legacy two-rename restore was interrupted. Creating an
+    // empty database here would make the user's information appear to vanish.
+    if !path.exists() {
+        if let Some(parent)=path.parent() {
+            let stranded=fs::read_dir(parent).ok().map(|entries|
+                entries.flatten().any(|entry| {
+                    let name=entry.file_name().to_string_lossy().to_string();
+                    name.starts_with(".recall-original-") && name.ends_with(".sqlite")
+                })).unwrap_or(false);
+            if stranded {
+                return Err(sqlx::Error::Protocol(
+                    "RECALL: restauração interrompida detectada. O banco original está preservado em .recall-original-*.sqlite. Recupere-o antes de iniciar o aplicativo.".into()));
+            }
+        }
+    }
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
