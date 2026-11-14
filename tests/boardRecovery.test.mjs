@@ -51,6 +51,20 @@ test('invalid local records remain listed for a live card and never overwrite it
   assert.equal(result[0].status,'unreadable');
   assert.equal(result[0].snapshot,null);
 });
+test('failed saves and competing owners appear in recovery list',()=>{
+  const entries=[
+    {key:'recall-board-draft:card-a',raw:snapshot({__owner:'other'})}
+  ];
+  const competing=listBoardRecovery(entries,'default',[card],100,new Set(),'this-editor');
+  assert.equal(competing.length,1);
+  assert.equal(competing[0].status,'competing');
+  const pending=listBoardRecovery(
+    [{key:'recall-board-draft:card-a',raw:snapshot()}],
+    'default',[card],100,new Set(['card-a']),'this-editor'
+  );
+  assert.equal(pending[0].status,'pending');
+});
+
 test('only the exact original snapshot may be removed after a save or user decision',()=>{
   const first=snapshot();
   const second=snapshot({content:'Outra alteração'});

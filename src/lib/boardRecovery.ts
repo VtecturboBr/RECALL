@@ -22,7 +22,7 @@ export interface BoardRecoveryEntry {
   raw: string;
   itemId: string;
   snapshot: BoardDraftSnapshot | null;
-  status: 'conflict' | 'orphan' | 'competing' | 'unreadable';
+  status: 'conflict' | 'orphan' | 'competing' | 'unreadable' | 'pending';
 }
 
 function isValidNumber(value: unknown): value is number {
@@ -100,7 +100,9 @@ export function listBoardRecovery(
   entries: ReadonlyArray<{key: string; raw: string}>,
   boardId: string,
   liveCards: readonly BoardItem[],
-  maxEntries = 100
+  maxEntries = 100,
+  dirtyIds: ReadonlySet<string> = new Set(),
+  ownerId?: string
 ): BoardRecoveryEntry[] {
   const live = new Map(liveCards.map(card=>[card.id,card]));
   const found: BoardRecoveryEntry[] = [];
@@ -120,7 +122,7 @@ export function listBoardRecovery(
       }
       continue;
     }
-    if (descriptor.archived) {
+    if (descriptor.archived || (snapshot.__owner && ownerId && snapshot.__owner !== ownerId)) {
       found.push({key:entry.key,raw:entry.raw,itemId:descriptor.id,
         snapshot,status:'competing'});
     } else if (!card) {
@@ -129,6 +131,9 @@ export function listBoardRecovery(
     } else if (snapshot.revision !== card.revision) {
       found.push({key:entry.key,raw:entry.raw,itemId:descriptor.id,
         snapshot,status:'conflict'});
+    } else if (dirtyIds.has(descriptor.id) && !sameBoardDraftFields(snapshot,card)) {
+      found.push({key:entry.key,raw:entry.raw,itemId:descriptor.id,
+        snapshot,status:'pending'});
     }
   }
   return found.sort((a,b)=>(b.snapshot?.__updatedAt ?? 0)-(a.snapshot?.__updatedAt ?? 0));

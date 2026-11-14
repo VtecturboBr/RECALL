@@ -14,6 +14,17 @@ const EDITOR_OWNER: string = (() => {
   } catch { return 'temporary-' + Math.random().toString(36).slice(2); }
 })();
 
+export function isOwnedOrLegacyDraft(raw: string): boolean {
+  try {
+    const owner = (JSON.parse(raw) as { __owner?: unknown }).__owner;
+    return owner === undefined || owner === EDITOR_OWNER;
+  } catch { return false; }
+}
+
+export function currentDraftOwner(): string {
+  return EDITOR_OWNER;
+}
+
 export function saveOwnedDraft(key: string, payload: Record<string, unknown>): void {
   const previous = localStorage.getItem(key);
   if (previous) {
