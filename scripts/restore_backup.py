@@ -51,11 +51,28 @@ def verify_database(path: Path) -> dict[str, int]:
             result = connection.execute("PRAGMA quick_check").fetchone()
             if result is None or result[0] != "ok":
                 raise RestoreError(f"Falha na integridade do SQLite: {result}")
+            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            if version > 7 or version < 0:
+                raise RestoreError(f"Versão SQLite do RECALL incompatível: v{version}.")
+            fk_errors = connection.execute("PRAGMA foreign_key_check").fetchone()
+            if fk_errors:
+                raise RestoreError(f"Integridade referencial comprometida: {fk_errors}")
             tables = {row[0] for row in connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )}
             if "notes" not in tables:
                 raise RestoreError("Este arquivo não contém a tabela notes do RECALL.")
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(notes)")}
+            minimum = {"id","title","body","kind","pinned","remind_at",
+                       "notified_at","created_at","updated_at","deleted_at"}
+            if not minimum.issubset(columns):
+                raise RestoreError("Tabela notes incompleta ou de outra aplicação.")
+            if version >= 5 and not {"tasks","inbox_items","content_history","inbox_dispositions"}.issubset(tables):
+                raise RestoreError("Banco v5+ sem tabelas essenciais de histórico.")
+            if version >= 6 and "focus_sessions" not in tables:
+                raise RestoreError("Banco v6+ sem sessões de foco.")
+            if version >= 7 and "item_links" not in tables:
+                raise RestoreError("Banco v7 sem relacionamentos.")
             counts: dict[str, int] = {}
             for name in ("notes", "tasks", "inbox_items"):
                 if name in tables:
@@ -106,23 +123,15 @@ def restore_database(backup: Path, target: Path) -> Path:
     suffix = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:10]
     fallback = folder / f"recall-pre-restore-{suffix}.sqlite"
     staging = target.parent / f".recall-restore-{suffix}.partial"
-    original = target.parent / f".recall-original-{suffix}.sqlite"
-
     snapshot(target, fallback)
     try:
         snapshot(backup, staging)
-        # Atomic renames in the same directory. Keep original until replacement
-        # is validated; rollback if any stage fails.
-        os.replace(target, original)
-        try:
-            os.replace(staging, target)
-            verify_database(target)
-        except Exception:
-            if target.exists():
-                target.unlink()
-            os.replace(original, target)
-            raise
-        original.unlink(missing_ok=True)
+        # A single replace avoids the dangerous interval with no memoria.sqlite.
+        # The previous database has already been safely captured in fallback.
+        with staging.open("rb") as staged_file:
+            os.fsync(staged_file.fileno())
+        os.replace(staging, target)
+        verify_database(target)
         return fallback
     finally:
         staging.unlink(missing_ok=True)
