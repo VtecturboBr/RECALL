@@ -5,7 +5,7 @@
   import { NotebookPen, Check, X, Sparkles, CheckCircle2, CalendarDays, Command } from 'lucide-svelte';
   import { inboxApi, tasksApi } from '../lib/api';
   import { parseTaskCapture } from '../lib/smartCapture';
-  import { taskTitleForSave } from '../lib/editorSafety';
+  import { taskTitleForSave, captureCanClearAfterSave } from '../lib/editorSafety';
 
   let content = $state('');
   let kind = $state<'idea' | 'task'>('idea');
@@ -58,7 +58,7 @@
         await inboxApi.capture(submitted);
       }
       // Never delete text or cached recovery data typed while the IPC was pending.
-      if (content === submitted && kind === submittedKind) {
+      if (captureCanClearAfterSave(submitted, submittedKind, content, kind)) {
         content = '';
         try { localStorage.removeItem(DRAFT_KEY); } catch { /* Storage unavailable. */ }
         await windowHandle.hide();
