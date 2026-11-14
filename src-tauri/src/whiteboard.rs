@@ -1,5 +1,5 @@
 use serde::Serialize;
-use sqlx::{FromRow, SqlitePool};
+use sqlx::{FromRow, Row, SqlitePool};
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, FromRow)]
@@ -22,21 +22,31 @@ pub struct BoardConnection {
 }
 pub async fn migrate_v9(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let mut tx=pool.begin().await?;
-    sqlx::query("CREATE TABLE whiteboards (
+    sqlx::query("CREATE TABLE IF NOT EXISTS whiteboards (
         id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL,
         created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     )").execute(&mut *tx).await?;
     let now=crate::db::now_ms();
-    sqlx::query("INSERT INTO whiteboards(id,name,created_at,updated_at)
+    sqlx::query("INSERT OR IGNORE INTO whiteboards(id,name,created_at,updated_at)
         VALUES('default','Meu quadro',?,?)")
         .bind(now).bind(now).execute(&mut *tx).await?;
-    // Preserve IDs, revisions and asset references from v8.
-    sqlx::query("ALTER TABLE whiteboard_items
-        ADD COLUMN board_id TEXT NOT NULL DEFAULT 'default'").execute(&mut *tx).await?;
-    sqlx::query("CREATE INDEX idx_whiteboard_by_board
+    // Idempotent for legacy migration regression fixtures where user_version is
+    // rolled back but the additive board schema already exists. Never rebuild
+    // tables or overwrite board membership and IDs.
+    let columns = sqlx::query("PRAGMA table_info(whiteboard_items)")
+        .fetch_all(&mut *tx).await?;
+    let has_board_id = columns.iter().any(|column|
+        column.try_get::<String, _>("name").as_deref() == Ok("board_id")
+    );
+    if !has_board_id {
+        sqlx::query("ALTER TABLE whiteboard_items
+            ADD COLUMN board_id TEXT NOT NULL DEFAULT 'default'")
+            .execute(&mut *tx).await?;
+    }
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_whiteboard_by_board
         ON whiteboard_items(board_id,deleted_at,created_at,id)")
         .execute(&mut *tx).await?;
-    sqlx::query("CREATE TABLE whiteboard_connections (
+    sqlx::query("CREATE TABLE IF NOT EXISTS whiteboard_connections (
         id TEXT PRIMARY KEY NOT NULL,
         board_id TEXT NOT NULL REFERENCES whiteboards(id),
         from_id TEXT NOT NULL REFERENCES whiteboard_items(id),
@@ -44,7 +54,7 @@ pub async fn migrate_v9(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         created_at INTEGER NOT NULL,
         CHECK(from_id <> to_id), UNIQUE(board_id,from_id,to_id)
     )").execute(&mut *tx).await?;
-    sqlx::query("CREATE INDEX idx_whiteboard_connections_by_board
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_whiteboard_connections_by_board
         ON whiteboard_connections(board_id,created_at,id)").execute(&mut *tx).await?;
     sqlx::query("PRAGMA user_version=9").execute(&mut *tx).await?;
     tx.commit().await
@@ -260,6 +270,27 @@ mod tests {
     use std::fs;
 
 
+
+    #[tokio::test]
+    async fn legacy_recheck_keeps_existing_boards_and_connections() {
+        let folder=std::env::temp_dir().join(format!("recall-v9-repeat-{}",Uuid::new_v4()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path=folder.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let custom=create_board(&pool,"Estudos").await.unwrap();
+        let a=create(&pool,&custom.id,"note",0.0,0.0,"A",None).await.unwrap();
+        let b=create(&pool,&custom.id,"note",400.0,0.0,"B",None).await.unwrap();
+        let edge=connect_items(&pool,&custom.id,&a.id,&b.id).await.unwrap();
+        // Mirrors older test fixtures with downgraded version and current tables.
+        sqlx::query("PRAGMA user_version=8").execute(&pool).await.unwrap();
+        pool.close().await;
+        let upgraded=crate::db::connect(&path).await.unwrap();
+        assert_eq!(list(&upgraded,&custom.id).await.unwrap().len(),2);
+        assert_eq!(list_connections(&upgraded,&custom.id).await.unwrap()[0].id,edge.id);
+        assert_eq!(list_boards(&upgraded).await.unwrap().len(),2);
+        upgraded.close().await;
+        let _=std::fs::remove_dir_all(folder);
+    }
 
     #[tokio::test]
     async fn upgrading_from_v8_keeps_cards_images_and_creates_one_backup() {
