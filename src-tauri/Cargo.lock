@@ -2219,7 +2219,7 @@ dependencies = [
 
 [[package]]
 name = "memoria_externa"
-version = "0.5.0-alpha.10.0"
+version = "0.5.0-alpha.10.1"
 dependencies = [
  "chrono",
  "serde",

@@ -374,15 +374,15 @@ async fn remove_item_link(
 
 
 #[tauri::command]
-async fn list_board_items(state: tauri::State<'_, AppState>) -> Result<Vec<whiteboard::BoardItem>, String> {
-    whiteboard::list(&state.pool).await.map_err(|e|e.to_string())
+async fn list_board_items(state: tauri::State<'_, AppState>,board_id: String) -> Result<Vec<whiteboard::BoardItem>, String> {
+    whiteboard::list(&state.pool,&board_id).await.map_err(|e|e.to_string())
 }
 #[tauri::command]
 async fn create_board_item(
     state: tauri::State<'_, AppState>, app: tauri::AppHandle,
-    kind: String,x: f64,y: f64,content: String,asset_data_url: Option<String>
+    board_id: String,kind: String,x: f64,y: f64,content: String,asset_data_url: Option<String>
 ) -> Result<whiteboard::BoardItem,String> {
-    let item=whiteboard::create(&state.pool,&kind,x,y,&content,asset_data_url.as_deref()).await?;
+    let item=whiteboard::create(&state.pool,&board_id,&kind,x,y,&content,asset_data_url.as_deref()).await?;
     let _=app.emit("board:changed",&item.id);
     Ok(item)
 }
@@ -412,6 +412,54 @@ async fn get_board_asset(state: tauri::State<'_, AppState>,id: String) -> Result
     whiteboard::asset(&state.pool,&id).await.map_err(|e|e.to_string())
 }
 
+
+#[tauri::command]
+async fn list_whiteboards(state:tauri::State<'_,AppState>) -> Result<Vec<whiteboard::Whiteboard>,String> {
+    whiteboard::list_boards(&state.pool).await.map_err(|e|e.to_string())
+}
+#[tauri::command]
+async fn create_whiteboard(state:tauri::State<'_,AppState>,app:tauri::AppHandle,name:String)
+    -> Result<whiteboard::Whiteboard,String>
+{
+    let board=whiteboard::create_board(&state.pool,&name).await?;
+    let _=app.emit("board:structure-changed",());
+    Ok(board)
+}
+#[tauri::command]
+async fn rename_whiteboard(
+    state:tauri::State<'_,AppState>,app:tauri::AppHandle,id:String,name:String
+) -> Result<whiteboard::Whiteboard,String> {
+    let board=whiteboard::rename_board(&state.pool,&id,&name).await?
+        .ok_or_else(||"Quadro não encontrado".to_string())?;
+    let _=app.emit("board:structure-changed",());
+    Ok(board)
+}
+#[tauri::command]
+async fn list_board_connections(state:tauri::State<'_,AppState>,board_id:String)
+    -> Result<Vec<whiteboard::BoardConnection>,String>
+{
+    whiteboard::list_connections(&state.pool,&board_id).await.map_err(|e|e.to_string())
+}
+#[tauri::command]
+async fn connect_board_items(
+    state:tauri::State<'_,AppState>,app:tauri::AppHandle,
+    board_id:String,from_id:String,to_id:String
+) -> Result<whiteboard::BoardConnection,String> {
+    let edge=whiteboard::connect_items(&state.pool,&board_id,&from_id,&to_id).await?;
+    let _=app.emit("board:connections-changed",&board_id);
+    Ok(edge)
+}
+#[tauri::command]
+async fn disconnect_board_items(
+    state:tauri::State<'_,AppState>,app:tauri::AppHandle,id:String,board_id:String
+) -> Result<(),String> {
+    if !whiteboard::disconnect_items(&state.pool,&id,&board_id).await.map_err(|e|e.to_string())? {
+        return Err("Conexão não encontrada".into());
+    }
+    let _=app.emit("board:connections-changed",&board_id);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -421,6 +469,8 @@ pub fn run() {
             list_item_links, add_item_link, remove_item_link,
             list_daily_review,
             list_board_items,create_board_item,update_board_item,delete_board_item,get_board_asset,
+            list_whiteboards,create_whiteboard,rename_whiteboard,
+            list_board_connections,connect_board_items,disconnect_board_items,
             set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task,
             list_reminders, list_reminder_events, schedule_reminder, cancel_reminder,
             snooze_reminder, acknowledge_reminder])

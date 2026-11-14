@@ -1,11 +1,19 @@
 import { invoke } from '@tauri-apps/api/core';
 import { shouldClearFocusDraft } from './focusDraftSafety';
-import type { Note, Task, TaskResume, FocusSession, ItemLink, DailyReviewItem, InboxItem, Reminder, ReminderEvent, ReminderRule, BoardItem, BoardKind } from './types';
+import type { Note, Task, TaskResume, FocusSession, ItemLink, DailyReviewItem, InboxItem, Reminder, ReminderEvent, ReminderRule, BoardItem, BoardKind, Whiteboard, BoardConnection } from './types';
 
 export const boardApi = {
-  list: () => invoke<BoardItem[]>('list_board_items'),
-  create: (kind: BoardKind,x: number,y: number,content: string,assetDataUrl?: string) =>
-    invoke<BoardItem>('create_board_item',{kind,x,y,content,assetDataUrl}),
+  boards: () => invoke<Whiteboard[]>('list_whiteboards'),
+  createBoard: (name: string) => invoke<Whiteboard>('create_whiteboard',{name}),
+  renameBoard: (id: string,name: string) => invoke<Whiteboard>('rename_whiteboard',{id,name}),
+  list: (boardId: string) => invoke<BoardItem[]>('list_board_items',{boardId}),
+  connections: (boardId: string) => invoke<BoardConnection[]>('list_board_connections',{boardId}),
+  connect: (boardId: string,fromId: string,toId: string) =>
+    invoke<BoardConnection>('connect_board_items',{boardId,fromId,toId}),
+  disconnect: (boardId: string,id: string) =>
+    invoke<void>('disconnect_board_items',{boardId,id}),
+  create: (boardId: string,kind: BoardKind,x: number,y: number,content: string,assetDataUrl?: string) =>
+    invoke<BoardItem>('create_board_item',{boardId,kind,x,y,content,assetDataUrl}),
   update: (item: BoardItem) => invoke<BoardItem>('update_board_item',{
     id:item.id,x:item.x,y:item.y,width:item.width,height:item.height,
     content:item.content,expectedRevision:item.revision
