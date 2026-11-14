@@ -14,3 +14,11 @@ export function isEmptyIdeaEdit(value: string): boolean {
 export function restoreIdeaDraft(cached: string, persisted: string): boolean {
   return !isEmptyIdeaEdit(cached) && cached !== persisted;
 }
+
+/** Never clear an editor when newer keystrokes or a mode switch occurred mid-save. */
+export function captureCanClearAfterSave(
+  submittedText: string, submittedKind: 'idea' | 'task',
+  currentText: string, currentKind: 'idea' | 'task'
+): boolean {
+  return submittedText === currentText && submittedKind === currentKind;
+}

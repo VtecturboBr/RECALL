@@ -16,6 +16,7 @@ on:
       - 'feature/v0.5-alpha9-focus-2'
       - 'feature/v0.5-alpha9-1-contexto-conectado'
       - 'feature/v0.5-alpha9-2-revisao-diaria'
+      - 'fix/alpha9-2-1-estabilidade-integridade'
   workflow_dispatch:
 
 permissions:
@@ -46,7 +47,7 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
       - name: Instalar dependencias da interface
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Verificar Svelte e TypeScript
         run: npm run check
       - name: Testar busca e organização de itens
@@ -58,7 +59,7 @@ jobs:
       - name: Testar restauração SQLite offline
         run: python -m unittest discover -s scripts -p "test_*.py"
       - name: Executar testes Rust
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
       - name: Gerar instalador RECALL NSIS
         run: npm run installer -- --bundles nsis
       - name: Verificar arquivo e gerar SHA-256
@@ -80,7 +81,7 @@ jobs:
       - name: Publicar instalador para download
         uses: actions/upload-artifact@v4
         with:
-          name: RECALL-v0.5-alpha9-2-revisao-diaria-Windows-x64
+          name: RECALL-v0.5-alpha9-2-1-estabilidade-Windows-x64
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/bundle/nsis/SHA256SUMS.txt

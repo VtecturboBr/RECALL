@@ -37,8 +37,8 @@ export const tasksApi = {
   getResume: (taskId: string) => invoke<TaskResume | null>('get_task_resume', { taskId }),
   saveResume: (taskId: string, lastContext: string, nextStep: string, expectedRevision: number) =>
     invoke<TaskResume>('save_task_resume', { taskId, lastContext, nextStep, expectedRevision }),
-  complete: (id: string, completed: boolean) => invoke<Task>('set_task_completed', { id, completed }),
-  delete: (id: string) => invoke<void>('delete_task', { id })
+  complete: (id: string, completed: boolean, focusSummary?: string) => invoke<Task>('set_task_completed', { id, completed, focusSummary }),
+  delete: (id: string, focusSummary?: string) => invoke<void>('delete_task', { id, focusSummary })
 };
 
 export const focusApi = {
@@ -51,7 +51,7 @@ export const focusApi = {
 };
 
 export const reviewApi = {
-  list: () => invoke<DailyReviewItem[]>('list_daily_review')
+  list: (hiddenKeys: string[] = []) => invoke<DailyReviewItem[]>('list_daily_review', { hiddenKeys })
 };
 
 export const linksApi = {

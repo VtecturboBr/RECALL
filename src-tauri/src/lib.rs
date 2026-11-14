@@ -190,16 +190,18 @@ async fn save_task_resume(
     Ok(saved)
 }
 #[tauri::command]
-async fn set_task_completed(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, completed: bool) -> Result<tasks::Task, String> {
-    let task = tasks::set_completed(&state.pool, &id, completed).await.map_err(|e| e.to_string())?;
+async fn set_task_completed(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, completed: bool, focus_summary: Option<String>) -> Result<tasks::Task, String> {
+    if focus_summary.as_ref().is_some_and(|s| s.chars().count() > 2000) { return Err("Resumo muito longo".into()); }
+    let task = tasks::set_completed_with_summary(&state.pool, &id, completed, focus_summary.as_deref()).await.map_err(|e| e.to_string())?;
     if completed { let _ = app.emit("reminders:changed", &id); }
     let _ = app.emit("tasks:changed", &id);
     if completed { let _ = app.emit("focus:changed", &id); }
     Ok(task)
 }
 #[tauri::command]
-async fn delete_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String) -> Result<(), String> {
-    tasks::delete(&state.pool, &id).await.map_err(|e| e.to_string())?;
+async fn delete_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, focus_summary: Option<String>) -> Result<(), String> {
+    if focus_summary.as_ref().is_some_and(|s| s.chars().count() > 2000) { return Err("Resumo muito longo".into()); }
+    tasks::delete_with_summary(&state.pool, &id, focus_summary.as_deref()).await.map_err(|e| e.to_string())?;
     let _ = app.emit("reminders:changed", &id);
     let _ = app.emit("tasks:changed", &id);
     let _ = app.emit("focus:changed", &id);
@@ -235,8 +237,12 @@ async fn set_task_plan(
 }
 
 #[tauri::command]
-async fn list_daily_review(state: tauri::State<'_, AppState>) -> Result<Vec<review::ReviewItem>, String> {
-    review::list(&state.pool).await.map_err(|e| e.to_string())
+async fn list_daily_review(state: tauri::State<'_, AppState>, hidden_keys: Option<Vec<String>>) -> Result<Vec<review::ReviewItem>, String> {
+    let hidden = hidden_keys.unwrap_or_default();
+    if hidden.len()>100 || hidden.iter().any(|key|key.len()>200) {
+        return Err("Lista de itens ocultados inválida".into());
+    }
+    review::list_excluding(&state.pool, &hidden).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -433,6 +439,26 @@ pub fn run() {
                 }
                 builder.build(app)?;
             }
+
+            // Keep focus time alive even when the Agora panel is unmounted.
+            // A 12-second pulse and the 20-second cap together exclude long sleep/crashes.
+            let focus_pool = pool.clone();
+            let focus_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(12));
+                loop {
+                    interval.tick().await;
+                    match crate::focus::active(&focus_pool).await {
+                        Ok(Some(session)) => {
+                            if let Err(e) = crate::focus::heartbeat(&focus_pool, &session.id).await {
+                                eprintln!("Falha ao registrar tempo de foco: {e}");
+                            } else { let _ = focus_handle.emit("focus:changed", &session.task_id); }
+                        },
+                        Ok(None) => {},
+                        Err(e) => eprintln!("Falha ao consultar sessão de foco: {e}"),
+                    }
+                }
+            });
 
             // Native scheduler survives hidden windows. It runs on startup,
             // recovering overdue reminders into the persistent attention inbox.

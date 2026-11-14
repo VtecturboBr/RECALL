@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../src/lib/editorSafety.ts';
+import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft, captureCanClearAfterSave } from '../src/lib/editorSafety.ts';
 
 test('blank new tasks get a readable persistent title', () => {
   assert.equal(taskTitleForSave(''), UNNAMED_TASK);
@@ -17,4 +17,11 @@ test('blank idea edits cannot shadow existing database content on reopen', () =>
   assert.equal(restoreIdeaDraft(' \n ', 'Ideia original'), false);
   assert.equal(restoreIdeaDraft('Texto válido em rascunho', 'Ideia original'), true);
   assert.equal(restoreIdeaDraft('Ideia original', 'Ideia original'), false);
+});
+
+test('capture never clears typing or a changed capture kind during an IPC write', () => {
+  assert.equal(captureCanClearAfterSave('A','idea','A','idea'),true);
+  assert.equal(captureCanClearAfterSave('A','idea','AB','idea'),false);
+  assert.equal(captureCanClearAfterSave('A','idea','A','task'),false);
+  assert.equal(captureCanClearAfterSave('','task','','task'),true);
 });

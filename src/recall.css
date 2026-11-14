@@ -348,3 +348,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .re-review-error{font-size:12px;color:#ffc0ce;line-height:1.55;overflow-wrap:anywhere}
 .re-review-foot{font-size:11px;line-height:1.5;color:#9e919c;margin:12px 0 0}
 @media(max-width:680px){.re-review-heading{flex-wrap:wrap}.re-review-item{align-items:flex-start;flex-direction:column;gap:8px}.re-review-actions{align-self:flex-end}.re-review-toggle{min-width:125px}}
+
+
+/* Alpha 9.2.1: global recovery control for active focus (all views). */
+.re-global-focus{position:fixed;z-index:120;bottom:16px;right:18px;max-width:min(690px,calc(100vw - 36px));display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:12px 15px;border:1px solid #71414e;border-radius:12px;background:#211920;box-shadow:0 8px 35px #0009;color:#ffe6eb}
+.re-global-focus-label{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
+.re-global-focus-label small{color:#c4acb4;font-size:11px}
+.re-global-focus-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.re-global-focus-actions .re-outline{display:inline-flex;align-items:center;gap:5px;min-height:33px;padding:6px 9px;font-size:11px}
+.re-global-focus-error{width:100%;font-size:11px;line-height:1.4;color:#ffb9c7}
+@media(max-width:680px){.re-global-focus{left:12px;right:12px;bottom:12px;max-width:none}.re-global-focus-label small{display:none}}

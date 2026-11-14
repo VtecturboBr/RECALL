@@ -51,7 +51,7 @@
     loading = true;
     error = '';
     try {
-      const found = await reviewApi.list();
+      const found = await reviewApi.list([...hidden].slice(0, 100));
       if (alive && request === generation && expanded) {
         rows = found;
         loaded = true;
@@ -72,11 +72,13 @@
   function hideForToday(item: DailyReviewItem) {
     hidden = new Set([...hidden, reviewItemKey(item)]);
     storeHidden();
+    void refresh();
   }
 
   function showHidden() {
     hidden = new Set();
     storeHidden();
+    void refresh();
   }
 
   onMount(() => {
@@ -153,7 +155,7 @@
         {#if hidden.size > 0}
           <button class="re-review-show-hidden" onclick={showHidden}>Mostrar os {hidden.size} itens ocultados hoje</button>
         {/if}
-        <p class="re-review-foot">Até 12 destaques por consulta. Ocultar vale apenas neste dispositivo e neste dia; seus dados e lembretes continuam intactos.</p>
+        <p class="re-review-foot">Até 12 destaques visíveis por consulta; ocultações revelam os próximos. Ocultar vale apenas neste dispositivo e neste dia; seus dados e lembretes continuam intactos.</p>
       {/if}
     </div>
   {/if}

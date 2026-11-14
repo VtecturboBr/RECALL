@@ -125,13 +125,18 @@ pub async fn stop(pool: &SqlitePool, id: &str, state: &str, summary: &str) -> Re
 /// never keep a zombie active focus session. No user summary is destroyed.
 pub async fn finish_task_in_tx(
     tx: &mut sqlx::Transaction<'_,sqlx::Sqlite>, task_id: &str,
+) -> Result<(),sqlx::Error> { finish_task_with_summary_in_tx(tx, task_id, None).await }
+
+/// Transactionally preserve the unsaved progress summary when finishing a task.
+pub async fn finish_task_with_summary_in_tx(
+    tx: &mut sqlx::Transaction<'_,sqlx::Sqlite>, task_id: &str, summary: Option<&str>,
 ) -> Result<(),sqlx::Error> {
     let now=now_ms();
     sqlx::query("UPDATE focus_sessions SET
        active_ms=active_ms+MIN(MAX(0,?-last_tick_at),?),
-       last_tick_at=?,ended_at=?,state='interrupted'
+       last_tick_at=?,ended_at=?,state='interrupted',summary=COALESCE(?,summary)
        WHERE task_id=? AND state='active'")
-        .bind(now).bind(MAX_TICK_MS).bind(now).bind(now).bind(task_id)
+        .bind(now).bind(MAX_TICK_MS).bind(now).bind(now).bind(summary).bind(task_id)
         .execute(&mut **tx).await?;
     Ok(())
 }
@@ -144,6 +149,35 @@ mod tests {
         let dir=std::env::temp_dir().join(format!("recall-focus9-{}",Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         (dir.clone(),dir.join("memoria.sqlite"))
+    }
+
+    #[tokio::test]
+    async fn moving_focused_task_to_someday_keeps_session_pausable() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let task=tasks::create(&pool,"Tarefa movida").await.unwrap();
+        let session=start(&pool,&task.id).await.unwrap();
+        tasks::set_plan(&pool,&task.id,"someday",None).await.unwrap();
+        let current=active(&pool).await.unwrap().unwrap();
+        assert_eq!(current.id,session.id);
+        let stopped=stop(&pool,&current.id,"paused","Progresso preservado").await.unwrap();
+        assert_eq!(stopped.state,"paused");
+        assert_eq!(stopped.summary,"Progresso preservado");
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn overdue_heartbeat_is_capped_after_sleep() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let task=tasks::create(&pool,"Sessão longa").await.unwrap();
+        let session=start(&pool,&task.id).await.unwrap();
+        sqlx::query("UPDATE focus_sessions SET last_tick_at=last_tick_at-600000 WHERE id=?")
+            .bind(&session.id).execute(&pool).await.unwrap();
+        let updated=heartbeat(&pool,&session.id).await.unwrap();
+        assert_eq!(updated.active_ms,MAX_TICK_MS,
+            "ten-minute sleep must not inflate focus time");
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
