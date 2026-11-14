@@ -237,8 +237,12 @@ async fn set_task_plan(
 }
 
 #[tauri::command]
-async fn list_daily_review(state: tauri::State<'_, AppState>) -> Result<Vec<review::ReviewItem>, String> {
-    review::list(&state.pool).await.map_err(|e| e.to_string())
+async fn list_daily_review(state: tauri::State<'_, AppState>, hidden_keys: Option<Vec<String>>) -> Result<Vec<review::ReviewItem>, String> {
+    let hidden = hidden_keys.unwrap_or_default();
+    if hidden.len()>100 || hidden.iter().any(|key|key.len()>200) {
+        return Err("Lista de itens ocultados inválida".into());
+    }
+    review::list_excluding(&state.pool, &hidden).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
