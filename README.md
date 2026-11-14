@@ -2,7 +2,7 @@
 
 **Sua memória externa para Windows:** notas, tarefas, ideias, lembretes locais, apresentações, foco, revisão diária e o novo Quadro Infinito.
 
-> **Nova versão experimental:** `0.5.0-alpha.10.1` — vários quadros independentes e conexões entre cartões. CI e validação visual Windows ainda são necessárias. **Não é uma versão estável.** Sem sincronização Android.
+> **Versão experimental desta branch:** `0.5.0-alpha.10.2` — referências dinâmicas a notas e tarefas existentes. CI e teste visual no Windows continuam obrigatórios. **Não é uma versão estável.** Sem sincronização Android.
 
 ## O que o aplicativo oferece
 
@@ -13,6 +13,12 @@
 - **Captura Rápida:** janela global `Ctrl+Shift+Espaço` enquanto o RECALL está em execução, inclusive na bandeja; cria ideias e tarefas.
 - **Lembretes 2.0:** notificações genéricas (sem título privado na tela bloqueada), recorrência, adiamento e recuperação de lembretes vencidos.
 - **Armazenamento local:** SQLite com WAL, revisões concorrentes para dados textuais, exclusão lógica, históricos internos e snapshots verificados.
+
+## Alpha 10.2 — Cartões vinculados ao Arquivo
+
+No Quadro, **Do Arquivo** permite buscar notas e tarefas existentes e inseri-las como cartões de referência. O conteúdo é consultado diretamente no SQLite sempre que a tela abre ou o RECALL emite uma alteração de notas/tarefas — **sem duplicação do texto**. As referências podem ser conectadas por setas e movidas como qualquer cartão, mas a edição permanece na tela **Arquivo**, acessível pelo botão Abrir no Arquivo. Itens excluídos aparecem como indisponíveis, sem mostrar conteúdo privado antigo.
+
+Migração aditiva SQLite **v10**: tabela `whiteboard_references` com ID do cartão e ID da nota/tarefa. Antes de atualizar uma instalação v9, o aplicativo gera snapshot verificado `pre-alpha10-2-references`. Consulte [validação da Alpha 10.2](docs/ALPHA10_2_REFERENCIAS_DINAMICAS.md).
 
 ## Alpha 10.1 — Vários quadros e conexões
 
@@ -48,7 +54,7 @@ Esta atualização corrige erros encontrados na auditoria da Alpha 9.2:
 1. Feche o RECALL completamente pelo ícone da bandeja do sistema.
 2. Faça uma cópia integral da pasta `%APPDATA%\app.memoriaexterna.desktop`. Para testar migrações, prefira uma **conta Windows de teste** e uma **cópia** dos dados, não o banco principal.
 3. Abra [GitHub Actions do RECALL](https://github.com/VtecturboBr/RECALL/actions/workflows/windows-installer.yml).
-4. Selecione o run da branch `feature/v0.5-alpha10-1-quadros-conexoes` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-1-quadros-conexoes-Windows-x64`.
+4. Selecione o run da branch `feature/v0.5-alpha10-2-referencias-dinamicas` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-2-referencias-dinamicas-Windows-x64`.
 5. Extraia o ZIP, compare o SHA-256 do `.exe` com `SHA256SUMS.txt` e instale. Consulte [guia do instalador](docs/INSTALADOR_WINDOWS.md).
 
 O instalador é prévia **não assinada digitalmente**. Nenhum merge automático é feito na `main`.
@@ -75,7 +81,8 @@ Para gerar o instalador: `npm run installer -- --bundles nsis`.
 | `src/components/RecallStudio.svelte` | Tela principal Agora/Arquivo |
 | `src/components/QuickCapture.svelte` | Janela de captura |
 | `src/components/Whiteboard.svelte` | Quadro Infinito, pan/zoom e edição visual |
-| `src-tauri/src/whiteboard.rs` | Contratos SQLite v8, CAS e ativos de imagem |
+| `src-tauri/src/whiteboard.rs` | Contratos SQLite do Quadro, CAS e imagens |
+| `src-tauri/src/board_references.rs` | Índices de referências, atualização dinâmica a partir do Arquivo e migração v10 |
 | `src/components/Sticky.svelte` | Notas flutuantes |
 | `src/components/FocusSession.svelte`, `ActiveFocusBar.svelte` | Foco, resumo e controle global |
 | `src/components/LinkedItems.svelte`, `DailyReview.svelte` | Conexões e revisão |

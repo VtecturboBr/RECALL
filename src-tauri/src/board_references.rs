@@ -151,6 +151,35 @@ mod tests {
     use crate::{db,tasks};
     use std::fs;
 
+
+    #[tokio::test]
+    async fn upgrading_v9_keeps_existing_cards_and_creates_one_verified_backup() {
+        let folder=std::env::temp_dir().join(format!("recall-ref-v9-upgrade-{}",Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let path=folder.join("memoria.sqlite");
+        let pool=db::connect(&path).await.unwrap();
+        let note=db::create(&pool,"note").await.unwrap();
+        let old_card=crate::whiteboard::create(&pool,"default","note",25.0,30.0,"Texto de antes",None)
+            .await.unwrap();
+        sqlx::query("DROP TABLE whiteboard_references").execute(&pool).await.unwrap();
+        sqlx::query("DROP INDEX IF EXISTS idx_whiteboard_references_target")
+            .execute(&pool).await.unwrap();
+        sqlx::query("PRAGMA user_version=9").execute(&pool).await.unwrap();
+        pool.close().await;
+        let migrated=db::connect(&path).await.unwrap();
+        let cards=crate::whiteboard::list(&migrated,"default").await.unwrap();
+        assert!(cards.iter().any(|card|card.id==old_card.id && card.content=="Texto de antes"));
+        assert!(db::get(&migrated,&note.id).await.unwrap().is_some());
+        let backup=db::list_backups(&path).unwrap();
+        assert!(backup.iter().any(|file|file.file_name.contains("pre-alpha10-2-references")));
+        let count=backup.len();
+        migrated.close().await;
+        let reopened=db::connect(&path).await.unwrap();
+        assert_eq!(db::list_backups(&path).unwrap().len(),count);
+        reopened.close().await;
+        let _=fs::remove_dir_all(folder);
+    }
+
     #[tokio::test]
     async fn references_follow_source_edits_and_soft_delete_without_copying_text() {
         let folder=std::env::temp_dir().join(format!("recall-dynrefs-{}",Uuid::new_v4()));

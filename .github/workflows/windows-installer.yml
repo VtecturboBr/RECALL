@@ -20,6 +20,7 @@ on:
       - 'fix/alpha9-2-1-consolidacao-validacao'
       - 'feature/v0.5-alpha10-quadro-infinito'
       - 'feature/v0.5-alpha10-1-quadros-conexoes'
+      - 'feature/v0.5-alpha10-2-referencias-dinamicas'
   workflow_dispatch:
 
 permissions:
@@ -84,7 +85,7 @@ jobs:
       - name: Publicar instalador para download
         uses: actions/upload-artifact@v4
         with:
-          name: RECALL-v0.5-alpha10-1-quadros-conexoes-Windows-x64
+          name: RECALL-v0.5-alpha10-2-referencias-dinamicas-Windows-x64
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/bundle/nsis/SHA256SUMS.txt
