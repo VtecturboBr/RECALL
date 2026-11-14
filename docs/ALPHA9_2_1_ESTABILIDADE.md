@@ -18,6 +18,7 @@
 - **F10/F17** Tarefas sem nome são normalizadas para `Nova tarefa` na captura rápida e também na opção de salvar cópia de uma tarefa com conflito.
 - **F11** Ao converter ideia em nota ou tarefa, os relacionamentos são duplicados para a entidade resultante, na mesma transação, mantendo o histórico da ideia.
 - **F13** Revisão Diária lê um sinal booleano sobre detalhes da tarefa em vez de transferir 100 mil caracteres por linha.
+- **F15** Resolução de npm/Cargo registrada em lockfiles; workflows usam instalação e testes bloqueados nas versões registradas.
 - **F16** Restauração valida schema mínimo, `user_version` aceitável e `foreign_key_check`, rejeitando bases de outro produto ou versões novas.
 
 ## Testes acrescentados
@@ -36,7 +37,7 @@
 - **F12:** histórico, backups e snapshots legados ainda podem crescer; não foi implementada exclusão automática, que poderia destruir dados de recuperação. Requer política explícita e opção do usuário.
 - **F13:** busca global e Arquivo ainda carregam documentos completos; paginação exige alterar contratos frontend/backend e testes de busca sem regressão.
 - **F14:** testes de componentes e E2E WebView2 continuam pendentes; CI Rust/Node/Python não substitui teste visual no Windows.
-- **F15:** lockfiles e ações GitHub fixadas por SHA continuam pendentes; a cadeia de dependências não é reproduzível bit-a-bit.
+- **F15 (parcial):** `package-lock.json` e `src-tauri/Cargo.lock` foram criados no runner Windows; CI usa `npm ci` e `cargo --locked`. **Resta** fixar as GitHub Actions por SHA revisada e fazer verificação de supply chain. O build ainda não é bit-a-bit reproduzível.
 - **F18:** código legado de telas e CSS ainda permanece para evitar excluir dependências visuais sem captura/smoke test. README antigo necessita atualização completa.
 
 ## Roteiro único de validação Windows
