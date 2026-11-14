@@ -356,6 +356,50 @@ mod tests {
         let _=std::fs::remove_dir_all(folder);
     }
 
+
+    #[tokio::test]
+    async fn undo_redo_cas_rejects_stale_revision_from_second_window() {
+        let folder=std::env::temp_dir().join(format!("recall-board-undo-cas-{}",Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let path=folder.join("memoria.sqlite");
+        let pool=db::connect(&path).await.unwrap();
+        let initial=create(&pool,"default","note",10.0,20.0,"Antes",None).await.unwrap();
+
+        // First editor modifies a card and records the successful revision.
+        let edited=update(&pool,&initial.id,30.0,40.0,280.0,210.0,"Depois",0)
+            .await.unwrap().unwrap();
+        assert_eq!(edited.revision,1);
+
+        // A valid undo has to use the revision returned from the latest save.
+        let undone=update(&pool,&initial.id,10.0,20.0,280.0,210.0,"Antes",1)
+            .await.unwrap().unwrap();
+        assert_eq!(undone.revision,2);
+        let redone=update(&pool,&initial.id,30.0,40.0,280.0,210.0,"Depois",2)
+            .await.unwrap().unwrap();
+        assert_eq!(redone.revision,3);
+
+        // Another editor changes content; a stale undo must not overwrite it.
+        let remote=update(&pool,&initial.id,50.0,60.0,280.0,210.0,"Outra janela",3)
+            .await.unwrap().unwrap();
+        assert_eq!(remote.revision,4);
+        assert!(update(&pool,&initial.id,10.0,20.0,280.0,210.0,"Antes",3)
+            .await.unwrap().is_none());
+        let current=get(&pool,&initial.id).await.unwrap().unwrap();
+        assert_eq!(current.content,"Outra janela");
+        assert_eq!(current.revision,4);
+
+        // Even if another WebView writes matching fields, its newer revision
+        // must not be silently overwritten by a stale editor.
+        let identical_remote=update(&pool,&initial.id,30.0,40.0,280.0,210.0,"Depois",4)
+            .await.unwrap().unwrap();
+        assert_eq!(identical_remote.revision,5);
+        assert!(update(&pool,&initial.id,10.0,20.0,280.0,210.0,"Antes",3)
+            .await.unwrap().is_none());
+
+        pool.close().await;
+        let _=fs::remove_dir_all(folder);
+    }
+
     #[tokio::test]
     async fn whiteboard_persists_rejects_stale_edits_and_keeps_images_in_backup() {
         let folder=std::env::temp_dir().join(format!("recall-whiteboard-{}",Uuid::new_v4()));

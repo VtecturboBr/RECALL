@@ -1,8 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
-  import { StickyNote, ImagePlus, Link2, Table2, ZoomIn, ZoomOut, RotateCcw, Trash2, Move, Plus, ExternalLink, Pencil, Unlink2, Database, FileText, ListTodo, Search, X, CheckCircle2 } from 'lucide-svelte';
+  import { StickyNote, ImagePlus, Link2, Table2, ZoomIn, ZoomOut, RotateCcw, Undo2, Redo2, Trash2, Move, Plus, ExternalLink, Pencil, Unlink2, Database, FileText, ListTodo, Search, X, CheckCircle2 } from 'lucide-svelte';
   import { boardApi } from '../lib/api';
+  import {
+    emptyBoardHistory, recordBoardHistory, createBoardHistoryAction,
+    topBoardHistory, canApplyBoardHistory, historyDestination,
+    completeBoardHistory, forgetBoardCardHistory, sameBoardFields,
+    type BoardHistoryState, type BoardHistoryDirection
+  } from '../lib/boardHistory';
   import { saveOwnedDraft, discardOwnedDraft, isOwnedOrLegacyDraft, currentDraftOwner } from '../lib/draftOwnership';
   import {
     boardDraftState, parseBoardDraft, listBoardRecovery, sameBoardDraftFields,
@@ -41,6 +47,10 @@
   let recoveryOpen = $state(false);
   let recoveryBusy = $state(false);
   let recoveries = $state<BoardRecoveryEntry[]>([]);
+  let history = $state<BoardHistoryState>(emptyBoardHistory());
+  let historyBusy = $state(false);
+  // Only revisions confirmed by SQLite can be used for undo and redo.
+  const confirmed = new Map<string,BoardItem>();
   let selected = $state<string | null>(null);
   let zoom = $state(1);
   let panX = $state(0);
@@ -125,10 +135,19 @@
   }
   function closeBoardSearch() { searchOpen=false; searchQuery=''; }
   function boardShortcut(event: KeyboardEvent) {
-    if (switching || loading) return;
+    if (switching || loading || historyBusy) return;
     const target=event.target;
-    if (pickerOpen || (target instanceof HTMLElement &&
+    if (pickerOpen || recoveryOpen || (target instanceof HTMLElement &&
       target.closest('input,textarea,select,[contenteditable="true"],button'))) return;
+    // Preserve native browser text undo in editable fields.
+    if ((event.ctrlKey || event.metaKey) && !event.altKey &&
+        (event.key.toLowerCase()==='z' || event.key.toLowerCase()==='y')) {
+      event.preventDefault();
+      const direction: BoardHistoryDirection =
+        event.key.toLowerCase()==='y' || event.shiftKey ? 'redo' : 'undo';
+      void performHistory(direction);
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='f') {
       event.preventDefault();
       searchOpen=true;
@@ -143,6 +162,48 @@
   }
 
   const findItem = (id: string) => items.find(item => item.id === id);
+  async function performHistory(direction: BoardHistoryDirection) {
+    if (historyBusy || loading || switching || busy || recoveryBusy || referenceSaving || gesture) return;
+    historyBusy=true;
+    try {
+      // Never undo against an unsaved draft; flush it first, preserving
+      // recovery snapshots on failure.
+      if (!(await finishPending())) {
+        error='Há alterações não salvas. O histórico foi interrompido; o rascunho está preservado.';
+        return;
+      }
+      const action=topBoardHistory(history,direction);
+      if (!action) return;
+      const local=findItem(action.itemId);
+      const authoritative=confirmed.get(action.itemId);
+      if (!authoritative || !local || !sameBoardFields(local,authoritative)
+          || !canApplyBoardHistory(action,direction,activeBoardId,authoritative)) {
+        history=emptyBoardHistory();
+        error='O histórico não corresponde à versão atual do cartão. Operação cancelada; reabra o quadro para atualizar.';
+        return;
+      }
+      const destination=historyDestination(action,direction);
+      // boardApi.update sends expectedRevision=authoritative.revision;
+      // another window's concurrent update cannot be overwritten.
+      const updated=await boardApi.update({...authoritative,...destination});
+      confirmed.set(updated.id,updated);
+      items=items.map(item=>item.id===updated.id ? updated : item);
+      history=completeBoardHistory(history,direction);
+      selected=updated.id;
+      message=(direction==='undo'?'Desfeito: ':'Refeito: ')+action.label+'.';
+      error='';
+      scanBoardRecoveries();
+    } catch(e) {
+      if (String(e).includes('CONFLITO_QUADRO')) {
+        history=emptyBoardHistory();
+        error='Outra janela alterou o cartão. Desfazer/Refazer foi bloqueado; reabra o quadro para atualizar.';
+      } else {
+        error='Não foi possível aplicar o histórico. Os dados foram preservados: '+String(e);
+      }
+    } finally {
+      historyBusy=false;
+    }
+  }
   function sameFields(a: BoardItem, b: BoardItem): boolean {
     return a.x === b.x && a.y === b.y && a.width === b.width
       && a.height === b.height && a.content === b.content;
@@ -203,6 +264,8 @@
         snap.content
       );
       items = [...items,fresh];
+      confirmed.set(fresh.id,fresh);
+      history={...history,redo:[]};
       selected=fresh.id;
       message='Cópia recuperada em um novo cartão. O cartão e o rascunho originais foram preservados.';
       recoveryOpen=false;
@@ -229,7 +292,7 @@
     } catch(e) { error='Não foi possível descartar a cópia: '+String(e); }
   }
   function updateLocal(id: string, changes: Partial<BoardItem>, commit = true) {
-    if (switching || loading) return;
+    if (switching || loading || historyBusy) return;
     items = items.map(item => item.id === id ? { ...item, ...changes } : item);
     const current = findItem(id);
     if (!current) return;
@@ -260,7 +323,13 @@
     dirty.delete(id);
     const flight = (async () => {
       try {
-        const saved = await boardApi.update(snapshot);
+        const before=confirmed.get(id);
+        const saved=await boardApi.update(snapshot);
+        confirmed.set(id,saved);
+        if (before) {
+          const action=createBoardHistoryAction(before,saved);
+          if (action) history=recordBoardHistory(history,action);
+        }
         const latest = findItem(id);
         if (!latest) return;
         const unchanged = sameFields(latest, snapshot);
@@ -300,6 +369,9 @@
       for (const handle of timers.values()) clearTimeout(handle);
       timers.clear();
       dirty.clear();
+      confirmed.clear();
+      for (const item of loaded) confirmed.set(item.id,item);
+      history=emptyBoardHistory();
       items = loaded.map(item => {
         try {
           const raw = localStorage.getItem(draftKey(item.id));
@@ -370,7 +442,7 @@
     return dirty.size===0 && flights.size===0;
   }
   async function switchBoard(id: string): Promise<void> {
-    if (id===activeBoardId || switching || busy || loading) return;
+    if (id===activeBoardId || switching || busy || loading || historyBusy) return;
     switching = true;
     try {
       if (!(await finishPending())) {
@@ -386,7 +458,7 @@
     finally { switching = false; }
   }
   async function newBoard(): Promise<void> {
-    if (switching || busy) return;
+    if (switching || busy || historyBusy) return;
     const name = window.prompt('Nome do novo quadro:', 'Novo quadro');
     if (name===null) return;
     try {
@@ -398,7 +470,7 @@
   }
   async function renameCurrentBoard(): Promise<void> {
     const current=boards.find(board=>board.id===activeBoardId);
-    if (!current || switching) return;
+    if (!current || switching || historyBusy) return;
     const name=window.prompt('Renomear quadro:',current.name);
     if (name===null || name===current.name) return;
     try {
@@ -408,7 +480,7 @@
     } catch(e) { error='Não foi possível renomear: '+String(e); }
   }
   async function chooseConnection(id: string): Promise<void> {
-    if (connecting || switching || loading) return;
+    if (connecting || switching || loading || historyBusy) return;
     if (!connectFrom) {
       connectFrom=id;
       message='Selecione o botão Conectar em outro cartão para traçar uma seta.';
@@ -420,15 +492,18 @@
     try {
       const edge=await boardApi.connect(activeBoardId,source,id);
       if (!connections.some(existing=>existing.id===edge.id)) connections=[...connections,edge];
+      history={...history,redo:[]};
       connectFrom=null;
       message='Conexão salva.';
     } catch(e) { error='Falha ao conectar os cartões: '+String(e); }
     finally { connecting=false; }
   }
   async function removeConnection(id: string): Promise<void> {
+    if (historyBusy || switching || loading) return;
     try {
       await boardApi.disconnect(activeBoardId,id);
       connections=connections.filter(edge=>edge.id!==id);
+      history={...history,redo:[]};
       message='Conexão removida.';
     } catch(e) { error='Falha ao remover conexão: '+String(e); }
   }
@@ -454,7 +529,7 @@
     }
   }
   function openPicker() {
-    if (busy || switching || loading || referenceSaving) return;
+    if (busy || switching || loading || referenceSaving || historyBusy) return;
     pickerOpen = true;
     referenceQuery = '';
     referenceTargets = [];
@@ -469,7 +544,7 @@
     }, 220);
   }
   async function addReference(target: BoardReferenceTarget) {
-    if (busy || switching || loading || referenceSaving) return;
+    if (busy || switching || loading || referenceSaving || historyBusy) return;
     referenceSaving = true;
     const boardId = activeBoardId;
     try {
@@ -477,6 +552,8 @@
       const card = await boardApi.createReference(boardId,target.target_type,target.target_id,point.x,point.y);
       if (boardId !== activeBoardId) return;
       items = [...items, card];
+      confirmed.set(card.id,card);
+      history={...history,redo:[]};
       const refs = await boardApi.references(boardId);
       if (boardId === activeBoardId) {
         references = Object.fromEntries(refs.map(ref => [ref.item_id, ref]));
@@ -527,7 +604,7 @@
              y: Math.round((height / 2 - panY) / zoom - 100) };
   }
   async function create(kind: BoardKind, content?: string, dataUrl?: string) {
-    if (busy || switching || loading) return;
+    if (busy || switching || loading || historyBusy) return;
     busy = true;
     error = '';
     try {
@@ -538,6 +615,8 @@
       const item = await boardApi.create(activeBoardId, kind, position.x + items.length % 6 * 24,
         position.y + items.length % 6 * 24, initial, dataUrl);
       items = [...items, item];
+      confirmed.set(item.id,item);
+      history={...history,redo:[]};
       if (dataUrl) assets = { ...assets, [item.id]: dataUrl };
       selected = item.id;
       message = 'Cartão criado e salvo localmente.';
@@ -573,7 +652,7 @@
     input.value = '';
   }
   function paste(event: ClipboardEvent) {
-    if (switching || loading || busy) return;
+    if (switching || loading || busy || historyBusy) return;
     const target = event.target;
     if (target instanceof HTMLElement && target.closest('input,textarea,[contenteditable="true"]')) return;
     const files = Array.from(event.clipboardData?.files ?? []);
@@ -591,7 +670,7 @@
   }
   function onDrop(event: DragEvent) {
     event.preventDefault();
-    if (switching || loading || busy) return;
+    if (switching || loading || busy || historyBusy) return;
     const file = Array.from(event.dataTransfer?.files ?? []).find(item => item.type.startsWith('image/'));
     if (file) void addImage(file);
   }
@@ -615,7 +694,7 @@
     if (bounds) zoomAt(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2, zoom * factor);
   }
   function startPan(event: PointerEvent) {
-    if (switching || loading || (event.button !== 0 && event.button !== 1)) return;
+    if (switching || loading || historyBusy || (event.button !== 0 && event.button !== 1)) return;
     const target = event.target;
     if (target instanceof HTMLElement && target.closest('.re-board-card,.re-board-empty,.re-board-zoom,.re-board-minimap,.re-board-search-panel,button,input,textarea,a')) return;
     stage.focus({preventScroll:true});
@@ -624,7 +703,7 @@
     stage.setPointerCapture(event.pointerId);
   }
   function itemPointer(event: PointerEvent, item: BoardItem, mode: 'move' | 'resize') {
-    if (event.button !== 0 || switching || loading) return;
+    if (event.button !== 0 || switching || loading || historyBusy) return;
     event.preventDefault();
     event.stopPropagation();
     selected = item.id;
@@ -685,7 +764,7 @@
     catch { return null; }
   }
   async function removeCard(item: BoardItem) {
-    if (switching || loading) return;
+    if (switching || loading || historyBusy) return;
     if (!window.confirm('Mover este cartão para fora do Quadro? Ele continuará preservado no banco de dados.')) return;
     try {
       if (flights.has(item.id)) await flights.get(item.id);
@@ -695,6 +774,8 @@
       if (!current) return;
       await boardApi.remove(item.id,current.revision);
       items = items.filter(card=>card.id!==item.id);
+      confirmed.delete(item.id);
+      history={...forgetBoardCardHistory(history,item.id),redo:[]};
       references = Object.fromEntries(Object.entries(references).filter(([key])=>key!==item.id));
       connections = connections.filter(edge=>edge.from_id!==item.id && edge.to_id!==item.id);
       if (connectFrom===item.id) connectFrom=null;
@@ -726,6 +807,14 @@
       <button onclick={()=>{searchOpen=!searchOpen;if(!searchOpen)searchQuery='';}} disabled={loading} title="Localizar cartões neste quadro"><Search size={16}/> Encontrar</button>
       <button onclick={fitAll} disabled={loading || items.length===0} title="Enquadrar todos os cartões"><ZoomOut size={16}/> Enquadrar</button>
       <button onclick={()=>{minimapOpen=!minimapOpen;}} disabled={loading} title="Mostrar ou ocultar minimapa"><RotateCcw size={16}/> Minimapa</button>
+      <span class="re-board-history-controls" aria-label="Histórico de ações do quadro">
+        <button title="Desfazer última alteração salva (Ctrl+Z com o quadro em foco)"
+          aria-label="Desfazer última alteração do cartão" disabled={historyBusy || switching || loading || history.undo.length===0}
+          onclick={()=>{void performHistory('undo');}}><Undo2 size={16}/> Desfazer</button>
+        <button title="Refazer última alteração desfeita (Ctrl+Y ou Ctrl+Shift+Z com o quadro em foco)"
+          aria-label="Refazer última alteração do cartão" disabled={historyBusy || switching || loading || history.redo.length===0}
+          onclick={()=>{void performHistory('redo');}}><Redo2 size={16}/> Refazer</button>
+      </span>
       <input bind:this={imageInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="re-board-hidden" onchange={inputImages} aria-label="Escolher imagem para o quadro"/>
     </div>
   </div>
@@ -765,8 +854,8 @@
               onpointerdown={event=>itemPointer(event,item,'move')} onclick={()=>selected=item.id}>
               <Move size={14}/> <span>{references[item.id]?(references[item.id].target_type==='note'?'NOTA VINCULADA':'TAREFA VINCULADA'):item.kind==='note'?'NOTA':item.kind==='link'?'LINK':item.kind==='image'?'IMAGEM':'TABELA'}</span>
             </button>
-            <button class="re-board-connect" title={connectFrom===item.id?'Cancelar conexão':'Criar conexão'} aria-label={connectFrom===item.id?'Cancelar conexão':'Conectar cartão'} disabled={connecting || switching || loading} onclick={()=>{void chooseConnection(item.id);}}><Link2 size={14}/></button>
-            <button class="re-board-remove" title="Remover cartão" aria-label="Remover cartão" disabled={switching || loading} onclick={()=>{void removeCard(item);}}><Trash2 size={14}/></button>
+            <button class="re-board-connect" title={connectFrom===item.id?'Cancelar conexão':'Criar conexão'} aria-label={connectFrom===item.id?'Cancelar conexão':'Conectar cartão'} disabled={connecting || switching || loading || historyBusy} onclick={()=>{void chooseConnection(item.id);}}><Link2 size={14}/></button>
+            <button class="re-board-remove" title="Remover cartão" aria-label="Remover cartão" disabled={switching || loading || historyBusy} onclick={()=>{void removeCard(item);}}><Trash2 size={14}/></button>
           </div>
           {#if references[item.id]}
             <div class="re-board-reference">
@@ -782,11 +871,11 @@
               </button>
             </div>
           {:else if item.kind==='note'}
-            <textarea aria-label="Conteúdo da nota no quadro" placeholder="Escreva sua ideia..." value={item.content} disabled={switching || loading}
+            <textarea aria-label="Conteúdo da nota no quadro" placeholder="Escreva sua ideia..." value={item.content} disabled={switching || loading || historyBusy}
               oninput={event=>updateLocal(item.id,{content:event.currentTarget.value})}></textarea>
           {:else if item.kind==='link'}
             <div class="re-board-link-body"><label for={'board-link-'+item.id}>Endereço da página</label>
-              <textarea id={'board-link-'+item.id} spellcheck="false" placeholder="https://..." value={item.content} disabled={switching || loading}
+              <textarea id={'board-link-'+item.id} spellcheck="false" placeholder="https://..." value={item.content} disabled={switching || loading || historyBusy}
                 oninput={event=>updateLocal(item.id,{content:event.currentTarget.value})}></textarea>
               {#if safeLink(item.content)}<a href={safeLink(item.content) ?? undefined} target="_blank" rel="noopener noreferrer">Abrir link <ExternalLink size={13}/></a>
               {:else}<small>Digite um link http:// ou https://</small>{/if}
@@ -800,7 +889,7 @@
               <table aria-label="Tabela editável do quadro"><tbody>
                 {#each rows(item.content) as row, ri}
                   <tr>{#each row as cell, ci}
-                    <td><input aria-label={'Linha '+(ri+1)+', coluna '+(ci+1)} value={cell} disabled={switching || loading}
+                    <td><input aria-label={'Linha '+(ri+1)+', coluna '+(ci+1)} value={cell} disabled={switching || loading || historyBusy}
                       oninput={event=>tableCell(item.id,ri,ci,event.currentTarget.value)}/></td>
                   {/each}</tr>
                 {/each}
@@ -812,7 +901,7 @@
             </div>
           {/if}
           <button class="re-board-resizer" title="Redimensionar cartão" aria-label="Redimensionar cartão"
-            disabled={switching || loading} onpointerdown={event=>itemPointer(event,item,'resize')}></button>
+            disabled={switching || loading || historyBusy} onpointerdown={event=>itemPointer(event,item,'resize')}></button>
         </article>
       {/each}
     </div>
@@ -878,7 +967,7 @@
         {/each}
       </div>
     {/if}
-    <div class="re-board-help">Arraste para navegar · Roda: zoom · F: enquadrar · Ctrl+F: busca (quadro em foco)</div>
+    <div class="re-board-help">Arraste para navegar · F: enquadrar · Ctrl+F: busca · Ctrl+Z/Y: histórico (quadro em foco)</div>
   </div>
   {#if recoveryOpen}
     <div class="re-board-modal-backdrop">
@@ -969,6 +1058,8 @@
   .re-board-connections strong{font-size:11px}
   .re-board-connections button{display:flex;align-items:center;gap:6px;background:#2b222b;border:0;border-radius:5px;padding:7px;color:#f8d0df;font-size:11px;text-align:left;max-width:230px;word-break:break-word}
   .re-board-tools{display:flex;gap:7px;flex-wrap:wrap}
+  .re-board-history-controls{display:flex;align-items:center;gap:6px;padding-left:8px;border-left:1px solid #4c3a45}
+  .re-board-tools button:disabled,.re-board-history-controls button:disabled{opacity:.42;cursor:not-allowed}
   .re-board-tools button,.re-board-empty button{display:inline-flex;gap:7px;align-items:center;justify-content:center;background:#221d23;border:1px solid #4b353d;border-radius:9px;padding:9px 12px;color:#f4ecf0;font-size:12px;font-weight:650}
   .re-board-tools button:hover,.re-board-empty button:hover{background:#432330;border-color:#ae3854}
   .re-board-hidden{display:none}
