@@ -36,7 +36,7 @@ pub async fn migrate_v9(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let columns = sqlx::query("PRAGMA table_info(whiteboard_items)")
         .fetch_all(&mut *tx).await?;
     let has_board_id = columns.iter().any(|column|
-        column.try_get::<String, _>("name").as_deref() == Ok("board_id")
+        column.try_get::<String, _>("name").map(|name| name == "board_id").unwrap_or(false)
     );
     if !has_board_id {
         sqlx::query("ALTER TABLE whiteboard_items
