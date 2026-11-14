@@ -4,6 +4,17 @@ export interface Whiteboard {
   created_at: number;
   updated_at: number;
 }
+export interface BoardReferenceTarget {
+  target_type: 'note' | 'task';
+  target_id: string;
+  title: string;
+  preview: string;
+}
+export interface BoardReference extends BoardReferenceTarget {
+  item_id: string;
+  available: boolean;
+  completed: boolean;
+}
 export interface BoardConnection {
   id: string;
   board_id: string;
