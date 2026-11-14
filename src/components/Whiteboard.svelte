@@ -110,6 +110,48 @@
     return () => cancelAnimationFrame(frame);
   });
 
+  const imageInFlight = new Set<string>();
+  const failedImageIds = new Set<string>();
+  function hydrateVisibleImages(candidates: BoardItem[]) {
+    if (loading || switching) return;
+    const wanted=new Set(candidates.filter(item=>item.kind==='image').map(item=>item.id));
+    // Release large base64 data URLs as soon as their image leaves the
+    // overscanned viewport. This does not delete image bytes in SQLite.
+    const stored=Object.keys(assets);
+    const retained:Record<string,string>={};
+    for (const id of stored) if (wanted.has(id)) retained[id]=assets[id];
+    if (Object.keys(retained).length!==stored.length) assets=retained;
+    const remaining=candidates.filter(item=>!failedImageIds.has(item.id));
+    const requests=chooseVisibleImageIds(
+      remaining,new Set(Object.keys(assets)),imageInFlight
+    );
+    for (const id of requests) {
+      imageInFlight.add(id);
+      const request=boardRequest;
+      void boardApi.asset(id).then(dataUrl => {
+        if (request !== boardRequest || !dataUrl
+            || !visibleItems.some(item=>item.id===id)) return;
+        if (!assets[id] && Object.keys(assets).length < BOARD_IMAGE_CACHE_LIMIT) {
+          assets={...assets,[id]:dataUrl};
+        }
+      }).catch(() => {
+        if (request===boardRequest) {
+          failedImageIds.add(id);
+          message='Uma imagem visível não pôde ser carregada. Reabra o quadro para tentar novamente.';
+        }
+      }).finally(() => {
+        imageInFlight.delete(id);
+        if (request===boardRequest) hydrateVisibleImages(visibleItems);
+      });
+    }
+  }
+  $effect(() => {
+    const candidates=visibleItems;
+    // Cache mutation is a dependency; free slots trigger the next batch.
+    const count=Object.keys(assets).length;
+    if (!loading && !switching && count>=0) hydrateVisibleImages(candidates);
+  });
+
   const dirty = new Set<string>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const flights = new Map<string, Promise<void>>();
@@ -453,16 +495,11 @@
       selected = null;
       connectFrom = null;
       assets = {};
+      failedImageIds.clear();
       restoreView(id);
       searchQuery = '';
-      for (const item of loaded) {
-        if (item.kind !== 'image') continue;
-        void boardApi.asset(item.id).then(dataUrl => {
-          if (request === boardRequest && dataUrl) assets = { ...assets, [item.id]: dataUrl };
-        }).catch(() => {
-          if (request === boardRequest) message = 'Uma imagem não pôde ser carregada.';
-        });
-      }
+      // Visible image data is fetched later, once the viewport is ready.
+      // Hidden image blobs are never loaded just to open the board.
     } catch (e) {
       if (request === boardRequest) error = 'Não foi possível abrir o Quadro: ' + String(e);
       throw e;
@@ -668,7 +705,10 @@
       items = [...items, item];
       confirmed.set(item.id,item);
       history={...history,redo:[]};
-      if (dataUrl) assets = { ...assets, [item.id]: dataUrl };
+      if (dataUrl) {
+        assets = { ...assets, [item.id]: dataUrl };
+        // The next visibility pass evicts it if the new card is off-screen.
+      }
       selected = item.id;
       message = 'Cartão criado e salvo localmente.';
     } catch (e) { error = 'Falha ao criar cartão: ' + String(e); }
@@ -929,7 +969,7 @@
             </div>
           {:else if item.kind==='image'}
             {#if assets[item.id]}<img src={assets[item.id]} alt={item.content || 'Imagem adicionada ao quadro'} draggable="false"/>
-            {:else}<span class="re-board-image-loading">Carregando imagem...</span>{/if}
+            {:else}<span class="re-board-image-loading">Imagem sob demanda · aproxime para visualizar</span>{/if}
             <span class="re-board-image-name" title={item.content}>{item.content}</span>
           {:else}
             <div class="re-board-table-scroller">
