@@ -1,17 +1,26 @@
 # RECALL
 
-**Sua memória externa para Windows:** notas, tarefas, ideias, lembretes locais, apresentações, sessões de foco e revisão diária.
+**Sua memória externa para Windows:** notas, tarefas, ideias, lembretes locais, apresentações, foco, revisão diária e o novo Quadro Infinito.
 
-> **Versão experimental mais recente desta branch:** `0.5.0-alpha.9.2.1` — correções de estabilidade derivadas da Alpha 9.2. **Não é versão estável nem foi validada visualmente em Windows real.** Não há sincronização Android nem contas remotas.
+> **Nova versão experimental:** `0.5.0-alpha.10.0` — primeiro Quadro Infinito offline. Esta branch ainda requer CI e teste visual manual no Windows. **Não é uma versão estável.** Não há sincronização Android nem contas remotas.
 
 ## O que o aplicativo oferece
 
 - **Agora:** tarefas do dia, próxima ação, captura inline, Modo Foco 2.0 e Revisão Diária manual.
 - **Arquivo:** notas, apresentações, tarefas e ideias com busca, associação de informações e edição automática.
+- **Quadro (Alpha 10):** tela visual com pan/zoom, notas, imagens PNG/JPEG/WebP/GIF, links HTTP(S) e tabelas editáveis; cartões persistidos no SQLite com CAS.
 - **Onde parei?**: checkpoint e próximo passo por tarefa.
 - **Captura Rápida:** janela global `Ctrl+Shift+Espaço` enquanto o RECALL está em execução, inclusive na bandeja; cria ideias e tarefas.
 - **Lembretes 2.0:** notificações genéricas (sem título privado na tela bloqueada), recorrência, adiamento e recuperação de lembretes vencidos.
 - **Armazenamento local:** SQLite com WAL, revisões concorrentes para dados textuais, exclusão lógica, históricos internos e snapshots verificados.
+
+## Alpha 10 — Quadro Infinito
+
+Crie notas, cole texto/links/tabelas (TSV) e imagens com Ctrl+V ou selecione uma imagem. Arraste os cartões, ajuste seu tamanho e faça zoom com a roda do mouse ou os controles. Alterações são persistidas por cartão no SQLite com proteção de revisão; imagens ficam no banco e entram nos backups.
+
+Esta é a **primeira entrega experimental**, com um quadro único. Ainda não há setas/conexões, vários quadros, agrupamentos, histórico de desfazer, sincronização ou referências dinâmicas a notas/tarefas do Arquivo. A imagem individual aceita até 4,5 MB; há limites de 15 linhas e 8 colunas por tabela na interface. Rascunhos de texto são preservados localmente quando o salvamento falha, mas a recuperação visual de versões conflitantes ainda precisa de uma interface própria.
+
+**Plano detalhado e testes:** [Alpha 10 — Quadro](docs/ALPHA10_QUADRO.md).
 
 ## Alpha 9.2.1 — estabilidade
 
@@ -33,7 +42,7 @@ Esta atualização corrige erros encontrados na auditoria da Alpha 9.2:
 1. Feche o RECALL completamente pelo ícone da bandeja do sistema.
 2. Faça uma cópia integral da pasta `%APPDATA%\app.memoriaexterna.desktop`. Para testar migrações, prefira uma **conta Windows de teste** e uma **cópia** dos dados, não o banco principal.
 3. Abra [GitHub Actions do RECALL](https://github.com/VtecturboBr/RECALL/actions/workflows/windows-installer.yml).
-4. Selecione o run da branch `fix/alpha9-2-1-estabilidade-integridade` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha9-2-1-estabilidade-Windows-x64`.
+4. Selecione o run da branch `feature/v0.5-alpha10-quadro-infinito` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-quadro-Windows-x64`.
 5. Extraia o ZIP, compare o SHA-256 do `.exe` com `SHA256SUMS.txt` e instale. Consulte [guia do instalador](docs/INSTALADOR_WINDOWS.md).
 
 O instalador é prévia **não assinada digitalmente**. Nenhum merge automático é feito na `main`.
@@ -59,6 +68,8 @@ Para gerar o instalador: `npm run installer -- --bundles nsis`.
 |---|---|
 | `src/components/RecallStudio.svelte` | Tela principal Agora/Arquivo |
 | `src/components/QuickCapture.svelte` | Janela de captura |
+| `src/components/Whiteboard.svelte` | Quadro Infinito, pan/zoom e edição visual |
+| `src-tauri/src/whiteboard.rs` | Contratos SQLite v8, CAS e ativos de imagem |
 | `src/components/Sticky.svelte` | Notas flutuantes |
 | `src/components/FocusSession.svelte`, `ActiveFocusBar.svelte` | Foco, resumo e controle global |
 | `src/components/LinkedItems.svelte`, `DailyReview.svelte` | Conexões e revisão |
