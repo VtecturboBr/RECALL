@@ -89,6 +89,30 @@ fn split_capture(text: &str) -> (String, String) {
     (title, body)
 }
 
+/// Preserve the historical idea links and copy them to its converted successor.
+/// Both links and the conversion commit together; invalid/dormant targets remain dormant.
+async fn copy_links_after_conversion(
+    tx: &mut sqlx::Transaction<'_,sqlx::Sqlite>, idea_id: &str, kind: &str, new_id: &str,
+) -> Result<(),sqlx::Error> {
+    let relationships:Vec<(String,String,String,String)>=sqlx::query_as(
+        "SELECT left_type,left_id,right_type,right_id FROM item_links
+         WHERE (left_type='idea' AND left_id=?) OR (right_type='idea' AND right_id=?)"
+    ).bind(idea_id).bind(idea_id).fetch_all(&mut **tx).await?;
+    for (left_type,left_id,right_type,right_id) in relationships {
+        let other = if left_type=="idea" && left_id==idea_id {
+            (right_type,right_id)
+        } else { (left_type,left_id) };
+        let next=(kind.to_string(),new_id.to_string());
+        if next == other { continue; }
+        let (left,right)=if next<other {(next,other)}else{(other,next)};
+        sqlx::query("INSERT OR IGNORE INTO item_links(
+            id,left_type,left_id,right_type,right_id,created_at) VALUES(?,?,?,?,?,?)")
+            .bind(Uuid::new_v4().to_string()).bind(left.0).bind(left.1)
+            .bind(right.0).bind(right.1).bind(now_ms()).execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
 pub async fn to_note(pool: &SqlitePool, id: &str) -> Result<db::Note, sqlx::Error> {
     let mut transaction = pool.begin().await?;
     let (text,): (String,) = sqlx::query_as("SELECT text FROM inbox_items
@@ -106,6 +130,7 @@ pub async fn to_note(pool: &SqlitePool, id: &str) -> Result<db::Note, sqlx::Erro
         VALUES(?,'converted_note',?,?)
         ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,target_id=excluded.target_id,changed_at=excluded.changed_at")
         .bind(id).bind(&note_id).bind(now).execute(&mut *transaction).await?;
+    copy_links_after_conversion(&mut transaction,id,"note",&note_id).await?;
     transaction.commit().await?;
     db::get(pool, &note_id).await?.ok_or(sqlx::Error::RowNotFound)
 }
@@ -127,6 +152,7 @@ pub async fn to_task(pool: &SqlitePool, id: &str) -> Result<Task, sqlx::Error> {
         VALUES(?,'converted_task',?,?)
         ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,target_id=excluded.target_id,changed_at=excluded.changed_at")
         .bind(id).bind(&task_id).bind(now).execute(&mut *transaction).await?;
+    copy_links_after_conversion(&mut transaction,id,"task",&task_id).await?;
     transaction.commit().await?;
     crate::tasks::get(pool, &task_id).await?.ok_or(sqlx::Error::RowNotFound)
 }
