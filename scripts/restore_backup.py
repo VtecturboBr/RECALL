@@ -128,7 +128,7 @@ def restore_database(backup: Path, target: Path) -> Path:
         snapshot(backup, staging)
         # A single replace avoids the dangerous interval with no memoria.sqlite.
         # The previous database has already been safely captured in fallback.
-        with staging.open("rb") as staged_file:
+        with staging.open("r+b") as staged_file:
             os.fsync(staged_file.fileno())
         os.replace(staging, target)
         verify_database(target)
