@@ -177,7 +177,7 @@ pub async fn list(pool: &SqlitePool,board_id: &str) -> Result<Vec<BoardItem>,sql
         FROM whiteboard_items WHERE board_id=? AND deleted_at IS NULL ORDER BY created_at,id")
         .bind(board_id).fetch_all(pool).await
 }
-async fn get(pool: &SqlitePool, id: &str) -> Result<Option<BoardItem>, sqlx::Error> {
+pub(crate) async fn get(pool: &SqlitePool, id: &str) -> Result<Option<BoardItem>, sqlx::Error> {
     sqlx::query_as("SELECT id,kind,x,y,width,height,content,revision,created_at,updated_at,board_id
         FROM whiteboard_items WHERE id=? AND deleted_at IS NULL")
         .bind(id).fetch_optional(pool).await

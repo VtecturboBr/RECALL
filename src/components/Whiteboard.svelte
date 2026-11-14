@@ -1,11 +1,22 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { StickyNote, ImagePlus, Link2, Table2, ZoomIn, ZoomOut, RotateCcw, Trash2, Move, Plus, ExternalLink, Pencil, Unlink2 } from 'lucide-svelte';
+  import { listen } from '@tauri-apps/api/event';
+  import { StickyNote, ImagePlus, Link2, Table2, ZoomIn, ZoomOut, RotateCcw, Trash2, Move, Plus, ExternalLink, Pencil, Unlink2, Database, FileText, ListTodo, Search, X, CheckCircle2 } from 'lucide-svelte';
   import { boardApi } from '../lib/api';
-  import type { BoardItem, BoardKind, Whiteboard, BoardConnection } from '../lib/types';
+  import type { BoardItem, BoardKind, Whiteboard, BoardConnection, BoardReference, BoardReferenceTarget } from '../lib/types';
+
+  let { onOpenReference }: { onOpenReference?: (kind: 'note' | 'task', id: string) => void | Promise<void> } = $props();
 
   let items = $state<BoardItem[]>([]);
   let boards = $state<Whiteboard[]>([]);
+  let references = $state<Record<string, BoardReference>>({});
+  let pickerOpen = $state(false);
+  let referenceQuery = $state('');
+  let referenceTargets = $state<BoardReferenceTarget[]>([]);
+  let referenceSearching = $state(false);
+  let referenceSaving = $state(false);
+  let referenceSearchRequest = 0;
+  let pickerTimer: ReturnType<typeof setTimeout> | null = null;
   let activeBoardId = $state('default');
   let connections = $state<BoardConnection[]>([]);
   let connectFrom = $state<string | null>(null);
@@ -116,7 +127,9 @@
     const request = ++boardRequest;
     loading = true;
     try {
-      const [loaded, edges] = await Promise.all([boardApi.list(id),boardApi.connections(id)]);
+      const [loaded, edges, linked] = await Promise.all([
+        boardApi.list(id), boardApi.connections(id), boardApi.references(id)
+      ]);
       if (request !== boardRequest) return;
       for (const handle of timers.values()) clearTimeout(handle);
       timers.clear();
@@ -139,6 +152,8 @@
         } catch { return item; }
       });
       connections = edges;
+      references = Object.fromEntries(linked.map(ref => [ref.item_id, ref]));
+      pickerOpen = false;
       selected = null;
       connectFrom = null;
       assets = {};
@@ -242,13 +257,77 @@
       message='Conexão removida.';
     } catch(e) { error='Falha ao remover conexão: '+String(e); }
   }
+  async function refreshReferences() {
+    const id = activeBoardId;
+    try {
+      const current = await boardApi.references(id);
+      if (activeBoardId === id && !loading) {
+        references = Object.fromEntries(current.map(ref => [ref.item_id, ref]));
+      }
+    } catch { /* Keep the last visible state while a refresh fails. */ }
+  }
+  async function searchReferences() {
+    const request = ++referenceSearchRequest;
+    referenceSearching = true;
+    try {
+      const matches = await boardApi.searchTargets(referenceQuery);
+      if (request === referenceSearchRequest) referenceTargets = matches;
+    } catch (e) {
+      if (request === referenceSearchRequest) error = 'Erro na busca do Arquivo: ' + String(e);
+    } finally {
+      if (request === referenceSearchRequest) referenceSearching = false;
+    }
+  }
+  function openPicker() {
+    if (busy || switching || loading || referenceSaving) return;
+    pickerOpen = true;
+    referenceQuery = '';
+    referenceTargets = [];
+    void searchReferences();
+  }
+  function onReferenceSearch(text: string) {
+    referenceQuery = text;
+    if (pickerTimer !== null) clearTimeout(pickerTimer);
+    pickerTimer = setTimeout(() => {
+      pickerTimer = null;
+      void searchReferences();
+    }, 220);
+  }
+  async function addReference(target: BoardReferenceTarget) {
+    if (busy || switching || loading || referenceSaving) return;
+    referenceSaving = true;
+    const boardId = activeBoardId;
+    try {
+      const point = center();
+      const card = await boardApi.createReference(boardId,target.target_type,target.target_id,point.x,point.y);
+      if (boardId !== activeBoardId) return;
+      items = [...items, card];
+      const refs = await boardApi.references(boardId);
+      if (boardId === activeBoardId) {
+        references = Object.fromEntries(refs.map(ref => [ref.item_id, ref]));
+        selected = card.id;
+        pickerOpen = false;
+        message = 'Referência adicionada. O texto continua salvo apenas no Arquivo.';
+      }
+    } catch (e) { error = 'Não foi possível vincular o item: ' + String(e); }
+    finally { referenceSaving = false; }
+  }
   onMount(() => {
+    let alive = true;
+    const unlisten: Array<() => void> = [];
+    for (const eventName of ['notes:changed','tasks:changed']) {
+      void listen(eventName, () => { if (alive) void refreshReferences(); })
+        .then(dispose => { if (alive) unlisten.push(dispose); else dispose(); });
+    }
     void load();
     // A non-passive wheel listener is required to prevent browser-level zoom.
     stage.addEventListener('wheel', wheel, { passive: false });
     // Clipboard paste should work even immediately after using the toolbar.
     window.addEventListener('paste', paste);
     return () => {
+      alive = false;
+      unlisten.forEach(dispose => dispose());
+      if (pickerTimer !== null) clearTimeout(pickerTimer);
       stage.removeEventListener('wheel', wheel);
       window.removeEventListener('paste', paste);
       for (const timeout of timers.values()) clearTimeout(timeout);
@@ -427,6 +506,7 @@
       if (!current) return;
       await boardApi.remove(item.id,current.revision);
       items = items.filter(card=>card.id!==item.id);
+      references = Object.fromEntries(Object.entries(references).filter(([key])=>key!==item.id));
       connections = connections.filter(edge=>edge.from_id!==item.id && edge.to_id!==item.id);
       if (connectFrom===item.id) connectFrom=null;
       if (selected===item.id) selected=null;
@@ -453,6 +533,7 @@
       <button onclick={chooseImage} disabled={busy || switching || loading}><ImagePlus size={16}/> Imagem</button>
       <button onclick={() => { void create('link'); }} disabled={busy || switching || loading}><Link2 size={16}/> Link</button>
       <button onclick={() => { void create('table'); }} disabled={busy || switching || loading}><Table2 size={16}/> Tabela</button>
+      <button onclick={openPicker} disabled={busy || switching || loading || referenceSaving} title="Referenciar nota ou tarefa já existente"><Database size={16}/> Do Arquivo</button>
       <input bind:this={imageInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="re-board-hidden" onchange={inputImages} aria-label="Escolher imagem para o quadro"/>
     </div>
   </div>
@@ -484,12 +565,25 @@
           <div class="re-board-card-top">
             <button class="re-board-handle" title="Arrastar cartão" aria-label="Arrastar cartão"
               onpointerdown={event=>itemPointer(event,item,'move')} onclick={()=>selected=item.id}>
-              <Move size={14}/> <span>{item.kind==='note'?'NOTA':item.kind==='link'?'LINK':item.kind==='image'?'IMAGEM':'TABELA'}</span>
+              <Move size={14}/> <span>{references[item.id]?(references[item.id].target_type==='note'?'NOTA VINCULADA':'TAREFA VINCULADA'):item.kind==='note'?'NOTA':item.kind==='link'?'LINK':item.kind==='image'?'IMAGEM':'TABELA'}</span>
             </button>
             <button class="re-board-connect" title={connectFrom===item.id?'Cancelar conexão':'Criar conexão'} aria-label={connectFrom===item.id?'Cancelar conexão':'Conectar cartão'} disabled={connecting || switching || loading} onclick={()=>{void chooseConnection(item.id);}}><Link2 size={14}/></button>
             <button class="re-board-remove" title="Remover cartão" aria-label="Remover cartão" disabled={switching || loading} onclick={()=>{void removeCard(item);}}><Trash2 size={14}/></button>
           </div>
-          {#if item.kind==='note'}
+          {#if references[item.id]}
+            <div class="re-board-reference">
+              <div class="re-board-reference-kind">
+                {#if references[item.id].target_type==='note'}<FileText size={16}/>{:else}<ListTodo size={16}/>{/if}
+                {references[item.id].target_type==='note'?'Nota do Arquivo':'Tarefa do Arquivo'}
+                {#if references[item.id].completed}<span class="re-board-reference-done"><CheckCircle2 size={12}/> Concluída</span>{/if}
+              </div>
+              <strong title={references[item.id].title}>{references[item.id].title}</strong>
+              <p>{references[item.id].available ? (references[item.id].preview || 'Sem descrição.') : 'O item original foi excluído. A referência permanece para recuperação.'}</p>
+              <button disabled={!references[item.id].available || switching || loading} onclick={()=>{void onOpenReference?.(references[item.id].target_type,references[item.id].target_id);}}>
+                Abrir no Arquivo <ExternalLink size={13}/>
+              </button>
+            </div>
+          {:else if item.kind==='note'}
             <textarea aria-label="Conteúdo da nota no quadro" placeholder="Escreva sua ideia..." value={item.content} disabled={switching || loading}
               oninput={event=>updateLocal(item.id,{content:event.currentTarget.value})}></textarea>
           {:else if item.kind==='link'}
@@ -542,17 +636,46 @@
         <strong>Conexões</strong>
         {#each connections.filter(edge=>edge.from_id===selected || edge.to_id===selected) as edge (edge.id)}
           <button title="Remover esta conexão" onclick={()=>{void removeConnection(edge.id);}}>
-            <Unlink2 size={13}/> {edge.from_id===selected?'Para':'De'} {items.find(item=>item.id===(edge.from_id===selected?edge.to_id:edge.from_id))?.content.slice(0,22) || 'cartão'}
+            <Unlink2 size={13}/> {edge.from_id===selected?'Para':'De'} {references[edge.from_id===selected?edge.to_id:edge.from_id]?.title.slice(0,22) || items.find(item=>item.id===(edge.from_id===selected?edge.to_id:edge.from_id))?.content.slice(0,22) || 'cartão'}
           </button>
         {/each}
       </div>
     {/if}
     <div class="re-board-help">Arraste o fundo · Roda: zoom · Use Conectar em dois cartões para criar uma seta</div>
   </div>
+  {#if pickerOpen}
+    <div class="re-board-modal-backdrop">
+      <div class="re-board-modal" role="dialog" aria-modal="true" aria-labelledby="re-board-picker-title">
+        <div class="re-board-modal-head">
+          <div><span class="re-board-kicker">CONEXÃO COM SUA MEMÓRIA</span><h3 id="re-board-picker-title">Adicionar do Arquivo</h3><p>O cartão mostra o conteúdo original sem duplicá-lo.</p></div>
+          <button aria-label="Fechar seleção" disabled={referenceSaving} onclick={()=>{pickerOpen=false;}}><X size={19}/></button>
+        </div>
+        <label class="re-board-modal-search" for="re-board-reference-query"><Search size={17}/>
+          <input id="re-board-reference-query" aria-label="Buscar notas ou tarefas" placeholder="Pesquise pelo nome ou conteúdo..."
+            maxlength="100" value={referenceQuery} oninput={event=>onReferenceSearch(event.currentTarget.value)}
+            onkeydown={event=>{if(event.key==='Escape'&&!referenceSaving)pickerOpen=false;}}/>
+        </label>
+        <div class="re-board-target-list">
+          {#if referenceSearching}<p class="re-board-target-message">Buscando no Arquivo...</p>
+          {:else if referenceTargets.length===0}<p class="re-board-target-message">Nenhuma nota ou tarefa encontrada.</p>
+          {:else}
+            {#each referenceTargets as target (target.target_type+':'+target.target_id)}
+              <button class="re-board-target" disabled={referenceSaving} onclick={()=>{void addReference(target);}}>
+                <span class="re-board-target-icon">{#if target.target_type==='note'}<FileText size={17}/>{:else}<ListTodo size={17}/>{/if}</span>
+                <span class="re-board-target-copy"><strong>{target.title}</strong><small>{target.preview || (target.target_type==='note'?'Nota sem descrição':'Tarefa sem descrição')}</small></span>
+                <Plus size={16}/>
+              </button>
+            {/each}
+          {/if}
+        </div>
+        <div class="re-board-modal-bottom">Até 40 resultados mais recentes. As edições continuam sendo feitas no Arquivo.</div>
+      </div>
+    </div>
+  {/if}
 </section>
 
 <style>
-  .re-board-screen{display:flex;flex-direction:column;flex:1;min-height:0;background:#0c0c0f;overflow:hidden}
+  .re-board-screen{display:flex;flex-direction:column;flex:1;min-height:0;background:#0c0c0f;overflow:hidden;position:relative}
   .re-board-toolbar{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:17px 28px;border-bottom:1px solid #2b2930;background:#111114;flex-wrap:wrap}
   .re-board-intro{display:flex;flex-direction:column;gap:3px}
   .re-board-kicker{font-size:10px;letter-spacing:1.6px;color:#bc8591;font-weight:750}
@@ -574,6 +697,23 @@
   .re-board-tools button,.re-board-empty button{display:inline-flex;gap:7px;align-items:center;justify-content:center;background:#221d23;border:1px solid #4b353d;border-radius:9px;padding:9px 12px;color:#f4ecf0;font-size:12px;font-weight:650}
   .re-board-tools button:hover,.re-board-empty button:hover{background:#432330;border-color:#ae3854}
   .re-board-hidden{display:none}
+  .re-board-modal-backdrop{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#070608c9;z-index:20;padding:20px}
+  .re-board-modal{width:min(600px,100%);max-height:min(650px,100%);display:flex;flex-direction:column;background:#18151c;border:1px solid #50404e;border-radius:14px;box-shadow:0 35px 80px #000a;overflow:hidden}
+  .re-board-modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:15px;padding:21px 22px 14px}
+  .re-board-modal-head h3{margin:5px 0;font-size:22px;color:#f7eff3}
+  .re-board-modal-head p{margin:0;font-size:12px;color:#aaa3ad}
+  .re-board-modal-head button{display:grid;place-items:center;border:0;background:transparent;color:#d6c6d1;padding:5px}
+  .re-board-modal-search{display:flex;align-items:center;gap:8px;border:1px solid #554550;border-radius:9px;background:#0f0e13;margin:0 22px 14px;padding:0 10px;color:#ba9caa}
+  .re-board-modal-search input{border:0;outline:0;background:transparent;color:#f5eaf2;padding:12px 0;font-size:13px;flex:1;min-width:0}
+  .re-board-target-list{display:flex;flex-direction:column;gap:4px;overflow-y:auto;padding:0 13px 14px;min-height:120px}
+  .re-board-target-message{padding:22px;color:#b9acb6;text-align:center;font-size:13px}
+  .re-board-target{display:flex;align-items:center;gap:11px;border:1px solid transparent;border-radius:9px;padding:12px;background:#221d24;color:#f1e8ef;text-align:left}
+  .re-board-target:hover:not(:disabled){border-color:#96516b;background:#31222e}
+  .re-board-target-icon{display:grid;place-items:center;color:#fa8ead;width:30px;height:30px;flex-shrink:0;background:#432732;border-radius:7px}
+  .re-board-target-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+  .re-board-target-copy strong{font-size:13px;text-overflow:ellipsis;white-space:nowrap;overflow:hidden}
+  .re-board-target-copy small{font-size:11px;color:#b8abb6;text-overflow:ellipsis;white-space:nowrap;overflow:hidden}
+  .re-board-modal-bottom{padding:12px 22px;background:#151318;border-top:1px solid #332b33;color:#a99aa7;font-size:11px}
   .re-board-alert,.re-board-message{display:flex;justify-content:space-between;gap:12px;padding:9px 24px;background:#3d1b24;color:#ffe6eb;font-size:12px;z-index:5}
   .re-board-message{background:#24212b;color:#d7d1dc}
   .re-board-alert button,.re-board-message button{border:0;background:none;color:inherit;font-size:20px}
@@ -584,6 +724,13 @@
   .re-board-card{position:absolute;display:flex;flex-direction:column;overflow:hidden;background:#19191e;border:1px solid #50424a;border-radius:12px;box-shadow:0 14px 28px #0008;pointer-events:auto;color:#f2edf0;min-width:160px;min-height:110px}
   .re-board-selected{border-color:#e25373;box-shadow:0 0 0 1px #e25373,0 14px 28px #000a}
   .re-board-note{background:#241d21;border-color:#665058}
+  .re-board-reference{display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;padding:13px 15px;background:#191b20}
+  .re-board-reference-kind{display:flex;gap:6px;align-items:center;color:#f17d9b;font-size:10px;font-weight:700;letter-spacing:.3px}
+  .re-board-reference-done{display:flex;align-items:center;gap:3px;margin-left:auto;color:#88d9a4;font-size:9px;letter-spacing:0}
+  .re-board-reference strong{font-size:16px;color:#f6eef2;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .re-board-reference p{font-size:12px;color:#aea9b5;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+  .re-board-reference button{margin-top:auto;background:#30202c;border:1px solid #613b51;border-radius:7px;color:#f9d5e0;display:flex;align-items:center;justify-content:center;gap:5px;padding:7px;font-size:11px;font-weight:650}
+  .re-board-reference button:disabled{opacity:.45}
   .re-board-card-top{height:34px;flex:0 0 34px;display:flex;align-items:center;justify-content:space-between;padding:0 6px;background:#13131870;border-bottom:1px solid #ffffff1c}
   .re-board-handle{display:flex;gap:7px;align-items:center;flex:1;background:none;border:0;text-align:left;color:#d4bbc5;font-size:10px;font-weight:750;letter-spacing:1px;cursor:grab;padding:7px}
   .re-board-handle:active{cursor:grabbing}

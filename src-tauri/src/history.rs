@@ -194,7 +194,7 @@ mod tests {
 
         let upgraded = db::connect(&path).await.unwrap();
         let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&upgraded).await.unwrap();
-        assert_eq!(version,9);
+        assert_eq!(version,10);
         assert_eq!(db::get(&upgraded, &note.id).await.unwrap().unwrap().body, note.body);
         assert_eq!(tasks::get(&upgraded, &task.id).await.unwrap().unwrap().title, "Trabalho de faculdade");
         assert_eq!(inbox::get(&upgraded, &idea.id).await.unwrap().unwrap().text, "Ideia com acento: ação");

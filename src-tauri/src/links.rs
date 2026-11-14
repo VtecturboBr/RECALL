@@ -211,7 +211,7 @@ mod tests {
         let upgraded=db::connect(&path).await.unwrap();
         assert_eq!(tasks::get(&upgraded,&task.id).await.unwrap().unwrap().title,"Nunca apagar");
         let version:i64=sqlx::query_scalar("PRAGMA user_version").fetch_one(&upgraded).await.unwrap();
-        assert_eq!(version,9);
+        assert_eq!(version,10);
         assert!(db::list_backups(&path).unwrap().iter().any(|b|b.file_name.contains("pre-alpha9-links")));
         upgraded.close().await;let _=std::fs::remove_dir_all(dir);
     }

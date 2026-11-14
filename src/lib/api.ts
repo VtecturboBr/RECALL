@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { shouldClearFocusDraft } from './focusDraftSafety';
-import type { Note, Task, TaskResume, FocusSession, ItemLink, DailyReviewItem, InboxItem, Reminder, ReminderEvent, ReminderRule, BoardItem, BoardKind, Whiteboard, BoardConnection } from './types';
+import type { Note, Task, TaskResume, FocusSession, ItemLink, DailyReviewItem, InboxItem, Reminder, ReminderEvent, ReminderRule, BoardItem, BoardKind, Whiteboard, BoardConnection, BoardReference, BoardReferenceTarget } from './types';
 
 export const boardApi = {
   boards: () => invoke<Whiteboard[]>('list_whiteboards'),
@@ -8,6 +8,10 @@ export const boardApi = {
   renameBoard: (id: string,name: string) => invoke<Whiteboard>('rename_whiteboard',{id,name}),
   list: (boardId: string) => invoke<BoardItem[]>('list_board_items',{boardId}),
   connections: (boardId: string) => invoke<BoardConnection[]>('list_board_connections',{boardId}),
+  references: (boardId: string) => invoke<BoardReference[]>('list_board_references',{boardId}),
+  searchTargets: (query: string) => invoke<BoardReferenceTarget[]>('search_board_reference_targets',{query}),
+  createReference: (boardId: string,targetType: 'note' | 'task',targetId: string,x: number,y: number) =>
+    invoke<BoardItem>('create_board_reference',{boardId,targetType,targetId,x,y}),
   connect: (boardId: string,fromId: string,toId: string) =>
     invoke<BoardConnection>('connect_board_items',{boardId,fromId,toId}),
   disconnect: (boardId: string,id: string) =>

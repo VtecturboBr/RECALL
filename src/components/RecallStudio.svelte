@@ -1003,7 +1003,7 @@
     {#if loading}
       <div class="re-loading"><div class="re-loading-mark"><BrainCircuit size={25}/></div><p>Abrindo seu espaço...</p></div>
     {:else if view === 'board'}
-      <Whiteboard/>
+      <Whiteboard onOpenReference={(kind,id) => { void archiveEntry(kind+':'+id); }}/>
     {:else if view === 'now'}
       <div class="re-scroll re-now">
         <div class="re-container">
