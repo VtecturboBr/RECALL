@@ -152,6 +152,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn moving_focused_task_to_someday_keeps_session_pausable() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let task=tasks::create(&pool,"Tarefa movida").await.unwrap();
+        let session=start(&pool,&task.id).await.unwrap();
+        tasks::set_plan(&pool,&task.id,"someday",None).await.unwrap();
+        let current=active(&pool).await.unwrap().unwrap();
+        assert_eq!(current.id,session.id);
+        let stopped=stop(&pool,&current.id,"paused","Progresso preservado").await.unwrap();
+        assert_eq!(stopped.state,"paused");
+        assert_eq!(stopped.summary,"Progresso preservado");
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn overdue_heartbeat_is_capped_after_sleep() {
+        let (dir,path)=fixture();
+        let pool=db::connect(&path).await.unwrap();
+        let task=tasks::create(&pool,"Sessão longa").await.unwrap();
+        let session=start(&pool,&task.id).await.unwrap();
+        sqlx::query("UPDATE focus_sessions SET last_tick_at=last_tick_at-600000 WHERE id=?")
+            .bind(&session.id).execute(&pool).await.unwrap();
+        let updated=heartbeat(&pool,&session.id).await.unwrap();
+        assert_eq!(updated.active_ms,MAX_TICK_MS,
+            "ten-minute sleep must not inflate focus time");
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn focus_lifecycle_and_restart_persist_summary() {
         let (dir,path)=fixture();
         let pool=db::connect(&path).await.unwrap();
