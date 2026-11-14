@@ -36,6 +36,14 @@ pub async fn migrate_v10(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_whiteboard_references_target
         ON whiteboard_references(target_type,target_id)")
         .execute(&mut *tx).await?;
+    // Even a future editor or direct Tauri invocation must not duplicate source
+    // text into the backing whiteboard card. Geometry-only updates remain legal.
+    sqlx::query("CREATE TRIGGER IF NOT EXISTS whiteboard_reference_content_guard
+        BEFORE UPDATE OF content ON whiteboard_items
+        WHEN EXISTS(SELECT 1 FROM whiteboard_references WHERE item_id=OLD.id)
+          AND NEW.content<>OLD.content
+        BEGIN SELECT RAISE(ABORT, 'Referência vinculada é somente leitura'); END")
+        .execute(&mut *tx).await?;
     sqlx::query("PRAGMA user_version=10").execute(&mut *tx).await?;
     tx.commit().await
 }
@@ -49,6 +57,12 @@ pub async fn verify_v10(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     }
     sqlx::query("SELECT item_id,target_type,target_id,created_at
         FROM whiteboard_references LIMIT 0").fetch_all(pool).await?;
+    let guard:i64=sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master
+        WHERE type='trigger' AND name='whiteboard_reference_content_guard'")
+        .fetch_one(pool).await?;
+    if guard!=1 {
+        return Err(sqlx::Error::Protocol("Proteção de referências vinculadas ausente".into()));
+    }
     Ok(())
 }
 
@@ -192,6 +206,15 @@ mod tests {
         let card=create_reference(&pool,&board.id,"note",&note.id,0.0,0.0).await.unwrap();
         let task_card=create_reference(&pool,&board.id,"task",&task.id,400.0,0.0).await.unwrap();
         assert_eq!(card.content,"");
+        // Moving a linked card is allowed, editing a duplicate copy of its
+        // source text is rejected by SQLite even outside the Svelte UI.
+        assert!(crate::whiteboard::update(
+            &pool,&card.id,20.0,30.0,330.0,210.0,"Cópia proibida",0
+        ).await.is_err());
+        let moved=crate::whiteboard::update(
+            &pool,&card.id,20.0,30.0,330.0,210.0,"",0
+        ).await.unwrap().unwrap();
+        assert_eq!(moved.revision,1);
         let before=list_references(&pool,&board.id).await.unwrap();
         assert_eq!(before.len(),2);
         assert!(before.iter().find(|r|r.item_id==card.id).unwrap().available);
