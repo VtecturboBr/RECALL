@@ -4,6 +4,11 @@
   import { StickyNote, ImagePlus, Link2, Table2, ZoomIn, ZoomOut, RotateCcw, Undo2, Redo2, Trash2, Move, Plus, ExternalLink, Pencil, Unlink2, Database, FileText, ListTodo, Search, X, CheckCircle2 } from 'lucide-svelte';
   import { boardApi } from '../lib/api';
   import {
+    selectVisibleBoardItems, selectVisibleBoardEdges,
+    chooseVisibleImageIds, minimapWorldPoint,
+    BOARD_IMAGE_CACHE_LIMIT, MINIMAP_WIDTH, MINIMAP_HEIGHT
+  } from '../lib/boardPerformance';
+  import {
     emptyBoardHistory, recordBoardHistory, createBoardHistoryAction,
     topBoardHistory, canApplyBoardHistory, historyDestination,
     completeBoardHistory, forgetBoardCardHistory, sameBoardFields,
@@ -62,19 +67,65 @@
   let searchOpen = $state(false);
   let searchQuery = $state('');
   let minimapOpen = $state(true);
+  let minimapCanvas = $state<HTMLCanvasElement | undefined>(undefined);
   let viewTimer: ReturnType<typeof setTimeout> | null = null;
   const foundCards = $derived(searchBoardCards(items,references,searchQuery,40));
   const overviewBounds = $derived(boardBounds(items,160));
   const currentMiniWindow = $derived(miniRect(
     visibleWorldRect({panX,panY,zoom},viewportWidth,viewportHeight),
-    overviewBounds,180,112
+    overviewBounds,MINIMAP_WIDTH,MINIMAP_HEIGHT
   ));
+  const visibleItems = $derived(selectVisibleBoardItems(
+    items,{panX,panY,zoom},viewportWidth,viewportHeight,selected
+  ));
+  const visibleEdges = $derived(selectVisibleBoardEdges(
+    connections,items,{panX,panY,zoom},viewportWidth,viewportHeight
+  ));
+  // One canvas replaces thousands of clickable DOM elements in the minimap.
+  $effect(() => {
+    const canvas = minimapCanvas;
+    const cards = items;
+    const bounds = overviewBounds;
+    const windowRect = currentMiniWindow;
+    const selectedId = selected;
+    if (!minimapOpen || !canvas || !cards.length) return;
+    const frame=requestAnimationFrame(() => {
+      const ctx=canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.setTransform(2,0,0,2,0,0);
+      ctx.clearRect(0,0,MINIMAP_WIDTH,MINIMAP_HEIGHT);
+      ctx.fillStyle='#9c526b';
+      for (const item of cards) {
+        const rect=miniRect(item,bounds,MINIMAP_WIDTH,MINIMAP_HEIGHT);
+        ctx.fillStyle=item.id===selectedId?'#ff6c9d':'#94516b';
+        ctx.fillRect(rect.x,rect.y,Math.max(2,rect.width),Math.max(2,rect.height));
+      }
+      ctx.strokeStyle='#fff3f7';
+      ctx.lineWidth=1.5;
+      ctx.strokeRect(
+        windowRect.x,windowRect.y,
+        Math.max(0,windowRect.width),Math.max(0,windowRect.height)
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  });
 
   const dirty = new Set<string>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const flights = new Map<string, Promise<void>>();
   type Gesture = { kind: 'pan' | 'move' | 'resize'; pointer: number; startX: number; startY: number; x: number; y: number; width: number; height: number; id?: string };
   let gesture: Gesture | null = null;
+  function navigateMinimap(event: MouseEvent) {
+    if (switching || loading || historyBusy) return;
+    const bounds=event.currentTarget.getBoundingClientRect();
+    if (event.detail===0) { fitAll(); return; } // keyboard activation
+    const clickX=(event.clientX-bounds.left)*MINIMAP_WIDTH/Math.max(1,bounds.width);
+    const clickY=(event.clientY-bounds.top)*MINIMAP_HEIGHT/Math.max(1,bounds.height);
+    const point=minimapWorldPoint(overviewBounds,clickX,clickY);
+    panX=viewportWidth/2-point.x*zoom;
+    panY=viewportHeight/2-point.y*zoom;
+    scheduleViewSave();
+  }
   const draftKey = (id: string) => 'recall-board-draft:' + id;
   const viewKey = (id: string) => 'recall-board-viewport-v1:' + id;
   function persistView(id = activeBoardId) {
@@ -834,17 +885,13 @@
       <svg class="re-board-edges" xmlns="http://www.w3.org/2000/svg" width="1" height="1" aria-hidden="true">
         <defs><marker id="re-board-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
           <path d="M0,0 L7,3 L0,6 Z" fill="#da5578"/></marker></defs>
-        {#each connections as edge (edge.id)}
-          {@const source = items.find(item=>item.id===edge.from_id)}
-          {@const target = items.find(item=>item.id===edge.to_id)}
-          {#if source && target}
-            <line x1={source.x + source.width/2} y1={source.y + source.height/2}
-              x2={target.x + target.width/2} y2={target.y + target.height/2}
-              stroke="#da5578" stroke-width="2.5" marker-end="url(#re-board-arrow)"/>
-          {/if}
+        {#each visibleEdges as link (link.edge.from_id+':'+link.edge.to_id)}
+          <line x1={link.from.x + link.from.width/2} y1={link.from.y + link.from.height/2}
+            x2={link.to.x + link.to.width/2} y2={link.to.y + link.to.height/2}
+            stroke="#da5578" stroke-width="2.5" marker-end="url(#re-board-arrow)"/>
         {/each}
       </svg>
-      {#each items as item (item.id)}
+      {#each visibleItems as item (item.id)}
         <article class="re-board-card" class:re-board-selected={selected===item.id}
           class:re-board-note={item.kind==='note'} class:re-board-image={item.kind==='image'}
           class:re-board-link={item.kind==='link'} class:re-board-table={item.kind==='table'} class:re-board-connecting={connectFrom===item.id}
@@ -938,17 +985,12 @@
     {#if minimapOpen && items.length>0}
       <div class="re-board-minimap" aria-label="Minimapa do quadro">
         <div class="re-board-minimap-header"><strong>MINIMAPA</strong><span>{items.length} cartões</span></div>
-        <div class="re-board-mini-content" aria-label="Selecionar cartão no minimapa">
-          {#each items as marker (marker.id)}
-            {@const rect=miniRect(marker,overviewBounds,180,112)}
-            <button class="re-board-mini-card" class:re-board-mini-selected={selected===marker.id}
-              style={'left:'+rect.x+'px;top:'+rect.y+'px;width:'+rect.width+'px;height:'+rect.height+'px'}
-              title={'Localizar '+labelForCard(marker)} aria-label={'Localizar '+labelForCard(marker)}
-              onclick={()=>focusCard(marker.id)}></button>
-          {/each}
-          <div class="re-board-mini-window"
-            style={'left:'+currentMiniWindow.x+'px;top:'+currentMiniWindow.y+'px;width:'+currentMiniWindow.width+'px;height:'+currentMiniWindow.height+'px'}></div>
-        </div>
+        <button class="re-board-mini-content" aria-label="Navegar pelo minimapa; Enter enquadra o quadro"
+          title="Clique para centralizar a área; Enter para enquadrar"
+          onclick={navigateMinimap}>
+          <canvas bind:this={minimapCanvas} width={MINIMAP_WIDTH*2} height={MINIMAP_HEIGHT*2}
+            aria-hidden="true"></canvas>
+        </button>
       </div>
     {/if}
     <div class="re-board-zoom" aria-label="Controles de zoom">
@@ -1095,10 +1137,9 @@
   .re-board-minimap-header{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#b6a4b0;margin-bottom:7px}
   .re-board-minimap-header strong{font-size:9px;letter-spacing:1px}
   .re-board-minimap-header span{font-size:9px}
-  .re-board-mini-content{position:relative;width:180px;height:112px;overflow:hidden;background-color:#100f13;background-image:radial-gradient(#4b3e4c .8px,transparent 1px);background-size:15px 15px;border:1px solid #3d323c;border-radius:5px}
-  .re-board-mini-card{position:absolute;z-index:1;min-width:3px;min-height:3px;border:1px solid #d687a1;background:#78384f;border-radius:1px;opacity:.8;cursor:pointer;padding:0}
-  .re-board-mini-card:hover,.re-board-mini-selected{background:#ff4f89;border-color:#ffc7d9;opacity:1;z-index:2}
-  .re-board-mini-window{position:absolute;border:1.5px solid #faf0f4;background:#ffffff12;pointer-events:none;z-index:3;box-sizing:border-box}
+  .re-board-mini-content{display:block;position:relative;width:180px;height:112px;overflow:hidden;background-color:#100f13;background-image:radial-gradient(#4b3e4c .8px,transparent 1px);background-size:15px 15px;border:1px solid #3d323c;border-radius:5px;padding:0;cursor:crosshair}
+  .re-board-mini-content canvas{display:block;width:180px;height:112px;pointer-events:none}
+  .re-board-mini-content:focus-visible{outline:2px solid #ff799f;outline-offset:3px}
   .re-board-modal-backdrop{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#070608c9;z-index:20;padding:20px}
   .re-board-modal{width:min(600px,100%);max-height:min(650px,100%);display:flex;flex-direction:column;background:#18151c;border:1px solid #50404e;border-radius:14px;box-shadow:0 35px 80px #000a;overflow:hidden}
   .re-board-modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:15px;padding:21px 22px 14px}
