@@ -179,6 +179,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    #[tokio::test]
+    async fn idea_conversions_keep_related_items_visible_on_new_entity() {
+        let dir=std::env::temp_dir().join(format!("recall-conversion-links-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pool=crate::db::connect(&dir.join("memoria.sqlite")).await.unwrap();
+        let other=crate::tasks::create(&pool,"Trabalho").await.unwrap();
+        let idea=super::capture(&pool,"Ideia de implementação").await.unwrap();
+        crate::links::add(&pool,"idea",&idea.id,"task",&other.id).await.unwrap();
+        let note=super::to_note(&pool,&idea.id).await.unwrap();
+        assert_eq!(crate::links::list(&pool,"note",&note.id).await.unwrap().len(),1);
+        let old_links:i64=sqlx::query_scalar("SELECT COUNT(*) FROM item_links
+            WHERE (left_type='idea' AND left_id=?) OR (right_type='idea' AND right_id=?)")
+            .bind(&idea.id).bind(&idea.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(old_links,1,"historical links must remain after conversion");
+        let idea2=super::capture(&pool,"Segunda ideia").await.unwrap();
+        crate::links::add(&pool,"idea",&idea2.id,"note",&note.id).await.unwrap();
+        let new_task=super::to_task(&pool,&idea2.id).await.unwrap();
+        assert_eq!(crate::links::list(&pool,"task",&new_task.id).await.unwrap().len(),1);
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test] fn converts_first_line_to_title() {
         assert_eq!(split_capture("Revisar slides\nAntes de dormir"), ("Revisar slides".into(), "Antes de dormir".into()));
     }
