@@ -56,6 +56,7 @@
     } catch { /* Do not destroy a damaged recovery snapshot. */ }
   }
   function updateLocal(id: string, changes: Partial<BoardItem>, commit = true) {
+    if (switching || loading) return;
     items = items.map(item => item.id === id ? { ...item, ...changes } : item);
     const current = findItem(id);
     if (!current) return;
@@ -180,7 +181,7 @@
     return dirty.size===0 && flights.size===0;
   }
   async function switchBoard(id: string): Promise<void> {
-    if (id===activeBoardId || switching) return;
+    if (id===activeBoardId || switching || busy || loading) return;
     switching = true;
     try {
       if (!(await finishPending())) {
@@ -217,7 +218,7 @@
     } catch(e) { error='Não foi possível renomear: '+String(e); }
   }
   async function chooseConnection(id: string): Promise<void> {
-    if (connecting) return;
+    if (connecting || switching || loading) return;
     if (!connectFrom) {
       connectFrom=id;
       message='Selecione o botão Conectar em outro cartão para traçar uma seta.';
@@ -262,7 +263,7 @@
              y: Math.round((height / 2 - panY) / zoom - 100) };
   }
   async function create(kind: BoardKind, content?: string, dataUrl?: string) {
-    if (busy) return;
+    if (busy || switching || loading) return;
     busy = true;
     error = '';
     try {
@@ -288,8 +289,15 @@
       error = 'Nesta versão, imagens precisam ter até 4,5 MB.';
       return;
     }
+    const boardAtStart = activeBoardId;
     const reader = new FileReader();
-    reader.onload = () => { if (typeof reader.result === 'string') void create('image', file.name.slice(0, 250), reader.result); };
+    reader.onload = () => {
+      if (boardAtStart !== activeBoardId || switching || loading) {
+        message = 'Imagem não adicionada porque o quadro foi alterado. Selecione-a novamente.';
+        return;
+      }
+      if (typeof reader.result === 'string') void create('image', file.name.slice(0, 250), reader.result);
+    };
     reader.onerror = () => { error = 'Não foi possível ler a imagem.'; };
     reader.readAsDataURL(file);
   }
@@ -301,6 +309,7 @@
     input.value = '';
   }
   function paste(event: ClipboardEvent) {
+    if (switching || loading || busy) return;
     const target = event.target;
     if (target instanceof HTMLElement && target.closest('input,textarea,[contenteditable="true"]')) return;
     const files = Array.from(event.clipboardData?.files ?? []);
@@ -318,6 +327,7 @@
   }
   function onDrop(event: DragEvent) {
     event.preventDefault();
+    if (switching || loading || busy) return;
     const file = Array.from(event.dataTransfer?.files ?? []).find(item => item.type.startsWith('image/'));
     if (file) void addImage(file);
   }
@@ -347,7 +357,7 @@
     stage.setPointerCapture(event.pointerId);
   }
   function itemPointer(event: PointerEvent, item: BoardItem, mode: 'move' | 'resize') {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || switching || loading) return;
     event.preventDefault();
     event.stopPropagation();
     selected = item.id;
@@ -407,6 +417,7 @@
     catch { return null; }
   }
   async function removeCard(item: BoardItem) {
+    if (switching || loading) return;
     if (!window.confirm('Mover este cartão para fora do Quadro? Ele continuará preservado no banco de dados.')) return;
     try {
       if (flights.has(item.id)) await flights.get(item.id);
@@ -438,10 +449,10 @@
       </div>
     </div>
     <div class="re-board-tools" role="toolbar" aria-label="Adicionar ao quadro">
-      <button onclick={() => { void create('note'); }} disabled={busy}><StickyNote size={16}/> Nota</button>
-      <button onclick={chooseImage} disabled={busy}><ImagePlus size={16}/> Imagem</button>
-      <button onclick={() => { void create('link'); }} disabled={busy}><Link2 size={16}/> Link</button>
-      <button onclick={() => { void create('table'); }} disabled={busy}><Table2 size={16}/> Tabela</button>
+      <button onclick={() => { void create('note'); }} disabled={busy || switching || loading}><StickyNote size={16}/> Nota</button>
+      <button onclick={chooseImage} disabled={busy || switching || loading}><ImagePlus size={16}/> Imagem</button>
+      <button onclick={() => { void create('link'); }} disabled={busy || switching || loading}><Link2 size={16}/> Link</button>
+      <button onclick={() => { void create('table'); }} disabled={busy || switching || loading}><Table2 size={16}/> Tabela</button>
       <input bind:this={imageInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="re-board-hidden" onchange={inputImages} aria-label="Escolher imagem para o quadro"/>
     </div>
   </div>
@@ -475,15 +486,15 @@
               onpointerdown={event=>itemPointer(event,item,'move')} onclick={()=>selected=item.id}>
               <Move size={14}/> <span>{item.kind==='note'?'NOTA':item.kind==='link'?'LINK':item.kind==='image'?'IMAGEM':'TABELA'}</span>
             </button>
-            <button class="re-board-connect" title={connectFrom===item.id?'Cancelar conexão':'Criar conexão'} aria-label={connectFrom===item.id?'Cancelar conexão':'Conectar cartão'} disabled={connecting} onclick={()=>{void chooseConnection(item.id);}}><Link2 size={14}/></button>
-            <button class="re-board-remove" title="Remover cartão" aria-label="Remover cartão" onclick={()=>{void removeCard(item);}}><Trash2 size={14}/></button>
+            <button class="re-board-connect" title={connectFrom===item.id?'Cancelar conexão':'Criar conexão'} aria-label={connectFrom===item.id?'Cancelar conexão':'Conectar cartão'} disabled={connecting || switching || loading} onclick={()=>{void chooseConnection(item.id);}}><Link2 size={14}/></button>
+            <button class="re-board-remove" title="Remover cartão" aria-label="Remover cartão" disabled={switching || loading} onclick={()=>{void removeCard(item);}}><Trash2 size={14}/></button>
           </div>
           {#if item.kind==='note'}
-            <textarea aria-label="Conteúdo da nota no quadro" placeholder="Escreva sua ideia..." value={item.content}
+            <textarea aria-label="Conteúdo da nota no quadro" placeholder="Escreva sua ideia..." value={item.content} disabled={switching || loading}
               oninput={event=>updateLocal(item.id,{content:event.currentTarget.value})}></textarea>
           {:else if item.kind==='link'}
             <div class="re-board-link-body"><label for={'board-link-'+item.id}>Endereço da página</label>
-              <textarea id={'board-link-'+item.id} spellcheck="false" placeholder="https://..." value={item.content}
+              <textarea id={'board-link-'+item.id} spellcheck="false" placeholder="https://..." value={item.content} disabled={switching || loading}
                 oninput={event=>updateLocal(item.id,{content:event.currentTarget.value})}></textarea>
               {#if safeLink(item.content)}<a href={safeLink(item.content) ?? undefined} target="_blank" rel="noopener noreferrer">Abrir link <ExternalLink size={13}/></a>
               {:else}<small>Digite um link http:// ou https://</small>{/if}
@@ -497,7 +508,7 @@
               <table aria-label="Tabela editável do quadro"><tbody>
                 {#each rows(item.content) as row, ri}
                   <tr>{#each row as cell, ci}
-                    <td><input aria-label={'Linha '+(ri+1)+', coluna '+(ci+1)} value={cell}
+                    <td><input aria-label={'Linha '+(ri+1)+', coluna '+(ci+1)} value={cell} disabled={switching || loading}
                       oninput={event=>tableCell(item.id,ri,ci,event.currentTarget.value)}/></td>
                   {/each}</tr>
                 {/each}
@@ -509,7 +520,7 @@
             </div>
           {/if}
           <button class="re-board-resizer" title="Redimensionar cartão" aria-label="Redimensionar cartão"
-            onpointerdown={event=>itemPointer(event,item,'resize')}></button>
+            disabled={switching || loading} onpointerdown={event=>itemPointer(event,item,'resize')}></button>
         </article>
       {/each}
     </div>
