@@ -379,6 +379,15 @@ async fn list_board_items(state: tauri::State<'_, AppState>,board_id: String) ->
     whiteboard::list(&state.pool,&board_id).await.map_err(|e|e.to_string())
 }
 #[tauri::command]
+async fn list_board_items_page(
+    state: tauri::State<'_, AppState>,
+    board_id: String,
+    cursor: Option<whiteboard::BoardPageCursor>,
+    limit: i64,
+) -> Result<whiteboard::BoardPage,String> {
+    whiteboard::list_page(&state.pool,&board_id,cursor,limit).await
+}
+#[tauri::command]
 async fn create_board_item(
     state: tauri::State<'_, AppState>, app: tauri::AppHandle,
     board_id: String,kind: String,x: f64,y: f64,content: String,asset_data_url: Option<String>
@@ -495,7 +504,7 @@ pub fn run() {
             get_active_focus, list_focus_sessions, start_focus_session, heartbeat_focus_session, stop_focus_session,
             list_item_links, add_item_link, remove_item_link,
             list_daily_review,
-            list_board_items,create_board_item,update_board_item,delete_board_item,get_board_asset,
+            list_board_items,list_board_items_page,create_board_item,update_board_item,delete_board_item,get_board_asset,
             list_whiteboards,create_whiteboard,rename_whiteboard,
             list_board_connections,connect_board_items,disconnect_board_items,
             search_board_reference_targets,list_board_references,create_board_reference,

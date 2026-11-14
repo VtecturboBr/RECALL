@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Row, SqlitePool};
 use uuid::Uuid;
 
@@ -177,6 +177,64 @@ pub async fn list(pool: &SqlitePool,board_id: &str) -> Result<Vec<BoardItem>,sql
         FROM whiteboard_items WHERE board_id=? AND deleted_at IS NULL ORDER BY created_at,id")
         .bind(board_id).fetch_all(pool).await
 }
+/// Stable keyset pagination using the existing index on
+/// (board_id,deleted_at,created_at,id); no SQLite migration required.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BoardPageCursor {
+    pub created_at: i64,
+    pub id: String,
+}
+#[derive(Debug, Serialize)]
+pub struct BoardPage {
+    pub items: Vec<BoardItem>,
+    pub next_cursor: Option<BoardPageCursor>,
+}
+pub const MAX_BOARD_PAGE_SIZE: i64 = 200;
+
+pub async fn list_page(
+    pool: &SqlitePool,
+    board_id: &str,
+    cursor: Option<BoardPageCursor>,
+    limit: i64,
+) -> Result<BoardPage, String> {
+    if !(1..=MAX_BOARD_PAGE_SIZE).contains(&limit) {
+        return Err("O tamanho do lote do Quadro deve ficar entre 1 e 200.".into());
+    }
+    if let Some(ref after) = cursor {
+        if after.id.is_empty() || after.id.len() > 128 || after.created_at < 0 {
+            return Err("Cursor do Quadro inválido.".into());
+        }
+    }
+    // Fetch one extra card so the client never needs a count query to know
+    // whether there is another page. Creation timestamps may be identical;
+    // id is the required deterministic tiebreaker.
+    let mut rows: Vec<BoardItem> = if let Some(after) = cursor {
+        sqlx::query_as("SELECT id,kind,x,y,width,height,content,revision,created_at,updated_at,board_id
+            FROM whiteboard_items
+            WHERE board_id=? AND deleted_at IS NULL
+              AND (created_at > ? OR (created_at = ? AND id > ?))
+            ORDER BY created_at,id LIMIT ?")
+            .bind(board_id).bind(after.created_at).bind(after.created_at)
+            .bind(after.id).bind(limit + 1)
+            .fetch_all(pool).await.map_err(|e|e.to_string())?
+    } else {
+        sqlx::query_as("SELECT id,kind,x,y,width,height,content,revision,created_at,updated_at,board_id
+            FROM whiteboard_items
+            WHERE board_id=? AND deleted_at IS NULL
+            ORDER BY created_at,id LIMIT ?")
+            .bind(board_id).bind(limit + 1)
+            .fetch_all(pool).await.map_err(|e|e.to_string())?
+    };
+    let has_more = rows.len() > limit as usize;
+    if has_more { rows.pop(); }
+    let next_cursor=if has_more {
+        rows.last().map(|item|BoardPageCursor{
+            created_at:item.created_at,id:item.id.clone()
+        })
+    } else { None };
+    Ok(BoardPage{items:rows,next_cursor})
+}
+
 pub(crate) async fn get(pool: &SqlitePool, id: &str) -> Result<Option<BoardItem>, sqlx::Error> {
     sqlx::query_as("SELECT id,kind,x,y,width,height,content,revision,created_at,updated_at,board_id
         FROM whiteboard_items WHERE id=? AND deleted_at IS NULL")
@@ -396,6 +454,86 @@ mod tests {
         assert!(update(&pool,&initial.id,10.0,20.0,280.0,210.0,"Antes",3)
             .await.unwrap().is_none());
 
+        pool.close().await;
+        let _=fs::remove_dir_all(folder);
+    }
+
+    #[tokio::test]
+    async fn paged_board_lists_all_cards_once_with_duplicate_timestamps() {
+        let folder=std::env::temp_dir().join(format!("recall-board-pages-{}",Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let path=folder.join("memoria.sqlite");
+        let pool=db::connect(&path).await.unwrap();
+        let board=create_board(&pool,"Cartões em lotes").await.unwrap();
+        let other=create_board(&pool,"Outro quadro").await.unwrap();
+        let mut ids=Vec::new();
+        for number in 0..47 {
+            let card=create(&pool,&board.id,"note",
+                f64::from(number)*10.0,0.0,&format!("Cartão {number}"),None)
+                .await.unwrap();
+            ids.push(card.id);
+        }
+        let foreign=create(&pool,&other.id,"note",0.0,0.0,"Não pode vazar",None)
+            .await.unwrap();
+        // Force matching created_at values; a simple timestamp cursor would
+        // omit or duplicate cards at page boundaries.
+        sqlx::query("UPDATE whiteboard_items SET created_at=123456789
+            WHERE board_id=?").bind(&board.id).execute(&pool).await.unwrap();
+        let removed_id=ids[4].clone();
+        assert!(delete(&pool,&removed_id,0).await.unwrap());
+        let mut seen=std::collections::HashSet::new();
+        let mut cursor=None;
+        let mut pages=0usize;
+        loop {
+            let page=list_page(&pool,&board.id,cursor,7).await.unwrap();
+            pages+=1;
+            assert!(page.items.len()<=7);
+            for item in &page.items {
+                assert_eq!(item.board_id,board.id);
+                assert!(!seen.contains(&item.id),"cartão repetido no cursor");
+                assert_ne!(item.id,foreign.id);
+                assert_ne!(item.id,removed_id);
+                seen.insert(item.id.clone());
+            }
+            match page.next_cursor {
+                Some(next)=> { assert!(!page.items.is_empty());cursor=Some(next); }
+                None=>break
+            }
+            assert!(pages<20,"paginação não deve entrar em ciclo");
+        }
+        assert_eq!(seen.len(),46);
+        let only=list_page(&pool,&other.id,None,50).await.unwrap();
+        assert_eq!(only.items.len(),1);
+        assert!(only.next_cursor.is_none());
+        let empty=list_page(&pool,"nao-existe",None,7).await.unwrap();
+        assert!(empty.items.is_empty());
+        assert!(empty.next_cursor.is_none());
+        assert!(list_page(&pool,&board.id,None,0).await.is_err());
+        assert!(list_page(&pool,&board.id,None,201).await.is_err());
+        assert!(list_page(&pool,&board.id,Some(BoardPageCursor{
+            created_at:-1,id:"invalid".into()
+        }),8).await.is_err());
+        pool.close().await;
+        let _=fs::remove_dir_all(folder);
+    }
+
+    #[tokio::test]
+    async fn paged_board_cannot_consume_an_unbounded_sql_result() {
+        let folder=std::env::temp_dir().join(format!("recall-board-page-limit-{}",Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let path=folder.join("memoria.sqlite");
+        let pool=db::connect(&path).await.unwrap();
+        for i in 0..405 {
+            create(&pool,"default","note",0.0,0.0,&format!("Nota {i}"),None)
+                .await.unwrap();
+        }
+        let a=list_page(&pool,"default",None,200).await.unwrap();
+        assert_eq!(a.items.len(),200);
+        let b=list_page(&pool,"default",a.next_cursor,200).await.unwrap();
+        assert_eq!(b.items.len(),200);
+        let c=list_page(&pool,"default",b.next_cursor,200).await.unwrap();
+        assert_eq!(c.items.len(),5);
+        assert!(c.next_cursor.is_none());
         pool.close().await;
         let _=fs::remove_dir_all(folder);
     }

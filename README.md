@@ -2,7 +2,7 @@
 
 **Sua memória externa para Windows:** notas, tarefas, ideias, lembretes locais, apresentações, foco, revisão diária e o novo Quadro Infinito.
 
-> **Nova etapa experimental:** `0.5.0-alpha.11.0` — desempenho do Quadro com renderização de área visível, carregamento de imagens sob demanda e minimapa em canvas. CI e teste manual no Windows continuam obrigatórios. **Não é versão estável.** Sem sincronização Android.
+> **Nova etapa experimental:** `0.5.0-alpha.11.1` — abertura do Quadro em lotes pequenos, verificação de cursores e menor custo reativo no Svelte. CI e teste manual no Windows continuam obrigatórios. **Não é versão estável.** Sem sincronização Android.
 
 ## O que o aplicativo oferece
 
@@ -13,6 +13,17 @@
 - **Captura Rápida:** janela global `Ctrl+Shift+Espaço` enquanto o RECALL está em execução, inclusive na bandeja; cria ideias e tarefas.
 - **Lembretes 2.0:** notificações genéricas (sem título privado na tela bloqueada), recorrência, adiamento e recuperação de lembretes vencidos.
 - **Armazenamento local:** SQLite com WAL, revisões concorrentes para dados textuais, exclusão lógica, históricos internos e snapshots verificados.
+
+## Alpha 11.1 — Abertura segura em lotes e menor memória
+
+- **Leitura em lotes pelo Tauri/SQLite:** cada resposta contém no máximo 120 cartões. O banco usa o índice existente e um cursor estável por data e ID, evitando uma resposta gigante e offsets cada vez mais lentos.
+- **Estado atômico:** até carregar o último lote, o Quadro exibe o progresso e mantém as edições bloqueadas. Se a leitura falhar, não substitui o quadro por uma lista parcial.
+- **Svelte mais leve:** coleções de cartões, conexões, vínculos e imagens são estados reativos superficiais, evitando milhares de wrappers Proxy profundos. As atualizações existentes já substituem os objetos imutavelmente.
+- **Validação de cursores:** detecta respostas duplicadas, fora de ordem ou que não avançam, em vez de carregar dados incorretos silenciosamente.
+- **Teste de estresse:** casos JS com 5.003 itens e testes Rust com mais de 400 cartões, empates de timestamps e separação de quadros.
+- Continua no **SQLite v10**, sem migração e sem dependência adicional. Dados, CAS, backups, rascunhos e histórico são preservados.
+
+Detalhes: [Alpha 11.1 — abertura em lotes](docs/ALPHA11_1_ABERTURA_LOTES.md).
 
 ## Alpha 11.0 — Quadro Infinito escalável
 
@@ -97,7 +108,7 @@ Esta atualização corrige erros encontrados na auditoria da Alpha 9.2:
 1. Feche o RECALL completamente pelo ícone da bandeja do sistema.
 2. Faça uma cópia integral da pasta `%APPDATA%\app.memoriaexterna.desktop`. Para testar migrações, prefira uma **conta Windows de teste** e uma **cópia** dos dados, não o banco principal.
 3. Abra [GitHub Actions do RECALL](https://github.com/VtecturboBr/RECALL/actions/workflows/windows-installer.yml).
-4. Selecione o run da branch `feature/v0.5-alpha11-quadro-escalavel` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha11-quadro-escalavel-Windows-x64`.
+4. Selecione o run da branch `feature/v0.5-alpha11-1-abertura-por-lotes` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha11-1-abertura-por-lotes-Windows-x64`.
 5. Extraia o ZIP, compare o SHA-256 do `.exe` com `SHA256SUMS.txt` e instale. Consulte [guia do instalador](docs/INSTALADOR_WINDOWS.md).
 
 O instalador é prévia **não assinada digitalmente**. Nenhum merge automático é feito na `main`.
