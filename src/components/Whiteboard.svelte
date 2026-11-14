@@ -3,6 +3,8 @@
   import { listen } from '@tauri-apps/api/event';
   import { StickyNote, ImagePlus, Link2, Table2, ZoomIn, ZoomOut, RotateCcw, Undo2, Redo2, Trash2, Move, Plus, ExternalLink, Pencil, Unlink2, Database, FileText, ListTodo, Search, X, CheckCircle2 } from 'lucide-svelte';
   import { boardApi } from '../lib/api';
+  import { BOARD_PAGE_BATCH_SIZE, mergeBoardPage } from '../lib/boardPaging';
+  import type { BoardPageCursor } from '../lib/types';
   import {
     selectVisibleBoardItems, selectVisibleBoardEdges,
     chooseVisibleImageIds, minimapWorldPoint,
@@ -28,9 +30,11 @@
 
   let { onOpenReference }: { onOpenReference?: (kind: 'note' | 'task', id: string) => void | Promise<void> } = $props();
 
-  let items = $state<BoardItem[]>([]);
+  // Every card edit replaces the array instead of mutating nested objects.
+  // Avoid creating a deep reactive Proxy for thousands of SQLite rows.
+  let items = $state.raw<BoardItem[]>([]);
   let boards = $state<Whiteboard[]>([]);
-  let references = $state<Record<string, BoardReference>>({});
+  let references = $state.raw<Record<string, BoardReference>>({});
   let pickerOpen = $state(false);
   let referenceQuery = $state('');
   let referenceTargets = $state<BoardReferenceTarget[]>([]);
@@ -39,13 +43,14 @@
   let referenceSearchRequest = 0;
   let pickerTimer: ReturnType<typeof setTimeout> | null = null;
   let activeBoardId = $state('default');
-  let connections = $state<BoardConnection[]>([]);
+  let connections = $state.raw<BoardConnection[]>([]);
   let connectFrom = $state<string | null>(null);
   let switching = $state(false);
   let connecting = $state(false);
   let boardRequest = 0;
-  let assets = $state<Record<string, string>>({});
+  let assets = $state.raw<Record<string, string>>({});
   let loading = $state(true);
+  let loadingCount = $state(0);
   let busy = $state(false);
   let error = $state('');
   let message = $state('');
@@ -456,10 +461,36 @@
   async function loadBoard(id: string) {
     const request = ++boardRequest;
     loading = true;
+    loadingCount = 0;
     try {
-      const [loaded, edges, linked] = await Promise.all([
-        boardApi.list(id), boardApi.connections(id), boardApi.references(id)
+      // Stream small IPC responses. Keep the previous board intact until
+      // *every* page succeeds; a partial load must never look like deletion.
+      const [first,edges,linked] = await Promise.all([
+        boardApi.listPage(id,null,BOARD_PAGE_BATCH_SIZE),
+        boardApi.connections(id),
+        boardApi.references(id)
       ]);
+      if (request !== boardRequest) return;
+      const loaded:BoardItem[] = [];
+      let page=first;
+      let previousCursor:BoardPageCursor | null=null;
+      let batchNumber=0;
+      while (true) {
+        if (request !== boardRequest) return;
+        const next=mergeBoardPage(
+          loaded,page,previousCursor,BOARD_PAGE_BATCH_SIZE
+        );
+        loadingCount=loaded.length;
+        if (!next) break;
+        previousCursor=next;
+        batchNumber++;
+        if (batchNumber%4===0) {
+          // Yield to the WebView to paint progress and process input;
+          // unlike rAF this also works while Windows is minimised.
+          await new Promise<void>(resolve=>setTimeout(resolve,0));
+        }
+        page=await boardApi.listPage(id,next,BOARD_PAGE_BATCH_SIZE);
+      }
       if (request !== boardRequest) return;
       for (const handle of timers.values()) clearTimeout(handle);
       timers.clear();
@@ -506,7 +537,10 @@
       if (request === boardRequest) error = 'Não foi possível abrir o Quadro: ' + String(e);
       throw e;
     } finally {
-      if (request === boardRequest) loading = false;
+      if (request === boardRequest) {
+        loading = false;
+        loadingCount = 0;
+      }
     }
   }
   async function load() {
@@ -994,7 +1028,13 @@
         </article>
       {/each}
     </div>
-    {#if loading}<div class="re-board-empty">Carregando quadro...</div>
+    {#if loading}
+      <div class="re-board-empty" role="status" aria-live="polite">
+        <StickyNote size={25}/>
+        <strong>Carregando quadro...</strong>
+        <span>{loadingCount > 0 ? loadingCount + ' cartões recebidos em lotes seguros' : 'Preparando dados locais...'}</span>
+        <span>As edições serão liberadas quando o carregamento estiver completo.</span>
+      </div>
     {:else if items.length===0}
       <div class="re-board-empty"><StickyNote size={28}/><strong>Um espaço aberto para suas ideias.</strong>
         <span>Crie uma nota, cole uma imagem ou arraste um arquivo para começar.</span>
