@@ -434,6 +434,26 @@ pub fn run() {
                 builder.build(app)?;
             }
 
+            // Keep focus time alive even when the Agora panel is unmounted.
+            // A 12-second pulse and the 20-second cap together exclude long sleep/crashes.
+            let focus_pool = pool.clone();
+            let focus_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(12));
+                loop {
+                    interval.tick().await;
+                    match crate::focus::active(&focus_pool).await {
+                        Ok(Some(session)) => {
+                            if let Err(e) = crate::focus::heartbeat(&focus_pool, &session.id).await {
+                                eprintln!("Falha ao registrar tempo de foco: {e}");
+                            } else { let _ = focus_handle.emit("focus:changed", &session.task_id); }
+                        },
+                        Ok(None) => {},
+                        Err(e) => eprintln!("Falha ao consultar sessão de foco: {e}"),
+                    }
+                }
+            });
+
             // Native scheduler survives hidden windows. It runs on startup,
             // recovering overdue reminders into the persistent attention inbox.
             // While the EXE or computer is off, Windows toasts cannot be sent.
