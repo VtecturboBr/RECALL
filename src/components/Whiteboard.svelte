@@ -479,7 +479,7 @@
       let batchNumber=0;
       while (true) {
         if (request !== boardRequest) return;
-        const next=mergeBoardPage(
+        const next:BoardPageCursor | null=mergeBoardPage(
           loaded,page,previousCursor,BOARD_PAGE_BATCH_SIZE
         );
         loadingCount=loaded.length;
