@@ -24,6 +24,15 @@ export interface BoardConnection {
 }
 
 export type BoardKind = 'note' | 'link' | 'table' | 'image';
+export interface BoardPageCursor {
+  created_at: number;
+  id: string;
+}
+export interface BoardItemsPage {
+  items: BoardItem[];
+  next_cursor: BoardPageCursor | null;
+}
+
 export interface BoardItem {
   id: string;
   board_id: string;
