@@ -159,7 +159,9 @@
   let gesture: Gesture | null = null;
   function navigateMinimap(event: MouseEvent) {
     if (switching || loading || historyBusy) return;
-    const bounds=event.currentTarget.getBoundingClientRect();
+    const button=event.currentTarget as HTMLButtonElement | null;
+    if (!button) return;
+    const bounds=button.getBoundingClientRect();
     if (event.detail===0) { fitAll(); return; } // keyboard activation
     const clickX=(event.clientX-bounds.left)*MINIMAP_WIDTH/Math.max(1,bounds.width);
     const clickY=(event.clientY-bounds.top)*MINIMAP_HEIGHT/Math.max(1,bounds.height);
@@ -705,7 +707,7 @@
       items = [...items, item];
       confirmed.set(item.id,item);
       history={...history,redo:[]};
-      if (dataUrl) {
+      if (dataUrl && Object.keys(assets).length < BOARD_IMAGE_CACHE_LIMIT) {
         assets = { ...assets, [item.id]: dataUrl };
         // The next visibility pass evicts it if the new card is off-screen.
       }
