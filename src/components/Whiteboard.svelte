@@ -133,7 +133,13 @@
   }
   onMount(() => {
     void load();
+    // A non-passive wheel listener is required to prevent browser-level zoom.
+    stage.addEventListener('wheel', wheel, { passive: false });
+    // Clipboard paste should work even immediately after using the toolbar.
+    window.addEventListener('paste', paste);
     return () => {
+      stage.removeEventListener('wheel', wheel);
+      window.removeEventListener('paste', paste);
       for (const timeout of timers.values()) clearTimeout(timeout);
       timers.clear();
       for (const id of [...dirty]) void persist(id);
@@ -225,7 +231,7 @@
   function startPan(event: PointerEvent) {
     if (event.button !== 0 && event.button !== 1) return;
     const target = event.target;
-    if (target instanceof HTMLElement && target.closest('.re-board-card')) return;
+    if (target instanceof HTMLElement && target.closest('.re-board-card,.re-board-empty,.re-board-zoom,button,input,textarea,a')) return;
     gesture = { kind: 'pan', pointer: event.pointerId, startX: event.clientX, startY: event.clientY,
       x: panX, y: panY, width: 0, height: 0 };
     stage.setPointerCapture(event.pointerId);
@@ -322,7 +328,7 @@
   {#if message}<div role="status" class="re-board-message"><span>{message}</span><button onclick={()=>message=''} aria-label="Fechar aviso">×</button></div>{/if}
   <div class="re-board-stage" bind:this={stage} tabindex="0" role="application" aria-label="Quadro visual: arraste o fundo para navegar, use a roda do mouse para aproximar"
     onpointerdown={startPan} onpointermove={pointerMove} onpointerup={pointerEnd} onpointercancel={pointerEnd}
-    onwheel={wheel} onpaste={paste} ondragover={event=>event.preventDefault()} ondrop={onDrop}>
+    ondragover={event=>event.preventDefault()} ondrop={onDrop}>
     <div class="re-board-grid" style={'background-size: '+(28*zoom)+'px '+(28*zoom)+'px; background-position: '+panX+'px '+panY+'px'}></div>
     <div class="re-board-world" style={'transform:translate('+panX+'px,'+panY+'px) scale('+zoom+')'}>
       {#each items as item (item.id)}
