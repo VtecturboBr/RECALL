@@ -51,6 +51,7 @@
   let assets = $state.raw<Record<string, string>>({});
   let loading = $state(true);
   let loadingCount = $state(0);
+  let boardLoadFailed = $state(false);
   let busy = $state(false);
   let error = $state('');
   let message = $state('');
@@ -461,6 +462,7 @@
   async function loadBoard(id: string) {
     const request = ++boardRequest;
     loading = true;
+    boardLoadFailed = false;
     loadingCount = 0;
     try {
       // Stream small IPC responses. Keep the previous board intact until
@@ -534,11 +536,15 @@
       // Visible image data is fetched later, once the viewport is ready.
       // Hidden image blobs are never loaded just to open the board.
     } catch (e) {
-      if (request === boardRequest) error = 'Não foi possível abrir o Quadro: ' + String(e);
+      if (request === boardRequest) {
+        boardLoadFailed = true;
+        error = 'Não foi possível abrir o Quadro. Nenhuma alteração parcial foi aplicada: ' + String(e);
+      }
       throw e;
     } finally {
       if (request === boardRequest) {
-        loading = false;
+        // Keep content controls blocked if any page failed.
+        loading = boardLoadFailed;
         loadingCount = 0;
       }
     }
@@ -553,8 +559,9 @@
       activeBoardId = available.find(board=>board.id===wanted)?.id ?? available[0].id;
       await loadBoard(activeBoardId);
     } catch (e) {
+      boardLoadFailed = true;
       error = 'Não foi possível carregar os quadros: ' + String(e);
-      loading = false;
+      loading = true;
     }
   }
   async function finishPending(): Promise<boolean> {
@@ -1031,9 +1038,15 @@
     {#if loading}
       <div class="re-board-empty" role="status" aria-live="polite">
         <StickyNote size={25}/>
-        <strong>Carregando quadro...</strong>
-        <span>{loadingCount > 0 ? loadingCount + ' cartões recebidos em lotes seguros' : 'Preparando dados locais...'}</span>
-        <span>As edições serão liberadas quando o carregamento estiver completo.</span>
+        {#if boardLoadFailed}
+          <strong>Não foi possível carregar o Quadro</strong>
+          <span>Nenhuma lista incompleta foi aplicada. Os cartões salvos continuam no SQLite.</span>
+          <button onclick={()=>{void load();}}><RotateCcw size={15}/> Tentar novamente</button>
+        {:else}
+          <strong>Carregando quadro...</strong>
+          <span>{loadingCount > 0 ? loadingCount + ' cartões recebidos em lotes seguros' : 'Preparando dados locais...'}</span>
+          <span>As edições serão liberadas quando o carregamento estiver completo.</span>
+        {/if}
       </div>
     {:else if items.length===0}
       <div class="re-board-empty"><StickyNote size={28}/><strong>Um espaço aberto para suas ideias.</strong>
