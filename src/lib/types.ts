@@ -1,6 +1,21 @@
+export interface Whiteboard {
+  id: string;
+  name: string;
+  created_at: number;
+  updated_at: number;
+}
+export interface BoardConnection {
+  id: string;
+  board_id: string;
+  from_id: string;
+  to_id: string;
+  created_at: number;
+}
+
 export type BoardKind = 'note' | 'link' | 'table' | 'image';
 export interface BoardItem {
   id: string;
+  board_id: string;
   kind: BoardKind;
   x: number;
   y: number;

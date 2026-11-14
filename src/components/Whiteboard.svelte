@@ -1,10 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { StickyNote, ImagePlus, Link2, Table2, ZoomIn, ZoomOut, RotateCcw, Trash2, Move, Plus, ExternalLink } from 'lucide-svelte';
+  import { StickyNote, ImagePlus, Link2, Table2, ZoomIn, ZoomOut, RotateCcw, Trash2, Move, Plus, ExternalLink, Pencil, Unlink2 } from 'lucide-svelte';
   import { boardApi } from '../lib/api';
-  import type { BoardItem, BoardKind } from '../lib/types';
+  import type { BoardItem, BoardKind, Whiteboard, BoardConnection } from '../lib/types';
 
   let items = $state<BoardItem[]>([]);
+  let boards = $state<Whiteboard[]>([]);
+  let activeBoardId = $state('default');
+  let connections = $state<BoardConnection[]>([]);
+  let connectFrom = $state<string | null>(null);
+  let switching = $state(false);
+  let connecting = $state(false);
+  let boardRequest = 0;
   let assets = $state<Record<string, string>>({});
   let loading = $state(true);
   let busy = $state(false);
@@ -102,9 +109,17 @@
     flights.set(id, flight);
     return flight;
   }
-  async function load() {
+
+  const BOARD_KEY = 'recall-board-selected-v1';
+  async function loadBoard(id: string) {
+    const request = ++boardRequest;
+    loading = true;
     try {
-      const loaded = await boardApi.list();
+      const [loaded, edges] = await Promise.all([boardApi.list(id),boardApi.connections(id)]);
+      if (request !== boardRequest) return;
+      for (const handle of timers.values()) clearTimeout(handle);
+      timers.clear();
+      dirty.clear();
       items = loaded.map(item => {
         try {
           const raw = localStorage.getItem(draftKey(item.id));
@@ -112,7 +127,7 @@
           const draft = JSON.parse(raw) as Partial<BoardItem>;
           if (typeof draft.content !== 'string' || typeof draft.revision !== 'number') return item;
           if (draft.revision !== item.revision) {
-            message = 'Há um rascunho antigo ou conflitante no armazenamento local. A versão do SQLite foi mantida.';
+            message = 'Rascunho conflitante preservado: os dados originais permanecem no SQLite.';
             return item;
           }
           const restored = { ...item, content: draft.content, x: Number(draft.x), y: Number(draft.y),
@@ -122,14 +137,109 @@
           return restored;
         } catch { return item; }
       });
+      connections = edges;
+      selected = null;
+      connectFrom = null;
+      assets = {};
+      panX = 0; panY = 0; zoom = 1;
       for (const item of loaded) {
         if (item.kind !== 'image') continue;
         void boardApi.asset(item.id).then(dataUrl => {
-          if (dataUrl) assets = { ...assets, [item.id]: dataUrl };
-        }).catch(() => { message = 'Uma imagem não pôde ser carregada.'; });
+          if (request === boardRequest && dataUrl) assets = { ...assets, [item.id]: dataUrl };
+        }).catch(() => {
+          if (request === boardRequest) message = 'Uma imagem não pôde ser carregada.';
+        });
       }
-    } catch (e) { error = 'Não foi possível abrir o Quadro: ' + String(e); }
-    finally { loading = false; }
+    } catch (e) {
+      if (request === boardRequest) error = 'Não foi possível abrir o Quadro: ' + String(e);
+      throw e;
+    } finally {
+      if (request === boardRequest) loading = false;
+    }
+  }
+  async function load() {
+    try {
+      const available = await boardApi.boards();
+      if (!available.length) throw new Error('Nenhum quadro foi encontrado no banco SQLite.');
+      boards = available;
+      let wanted: string | null = null;
+      try { wanted = localStorage.getItem(BOARD_KEY); } catch { /* storage optional */ }
+      activeBoardId = available.find(board=>board.id===wanted)?.id ?? available[0].id;
+      await loadBoard(activeBoardId);
+    } catch (e) {
+      error = 'Não foi possível carregar os quadros: ' + String(e);
+      loading = false;
+    }
+  }
+  async function finishPending(): Promise<boolean> {
+    for (let round=0;round<4;round++) {
+      const pending = [...new Set([...dirty,...flights.keys()])];
+      if (pending.length===0) return true;
+      await Promise.all(pending.map(id=>persist(id)));
+    }
+    return dirty.size===0 && flights.size===0;
+  }
+  async function switchBoard(id: string): Promise<void> {
+    if (id===activeBoardId || switching) return;
+    switching = true;
+    try {
+      if (!(await finishPending())) {
+        error = 'Existem cartões não salvos. Resolva o erro antes de trocar de quadro.';
+        return;
+      }
+      await loadBoard(id);
+      activeBoardId = id;
+      try { localStorage.setItem(BOARD_KEY,id); } catch { /* optional */ }
+      message = '';
+    } catch { /* loadBoard already shows the failure */ }
+    finally { switching = false; }
+  }
+  async function newBoard(): Promise<void> {
+    if (switching || busy) return;
+    const name = window.prompt('Nome do novo quadro:', 'Novo quadro');
+    if (name===null) return;
+    try {
+      const created = await boardApi.createBoard(name);
+      boards = [...boards,created];
+      await switchBoard(created.id);
+      if (activeBoardId===created.id) message = 'Novo quadro criado.';
+    } catch (e) { error = 'Falha ao criar quadro: ' + String(e); }
+  }
+  async function renameCurrentBoard(): Promise<void> {
+    const current=boards.find(board=>board.id===activeBoardId);
+    if (!current || switching) return;
+    const name=window.prompt('Renomear quadro:',current.name);
+    if (name===null || name===current.name) return;
+    try {
+      const renamed=await boardApi.renameBoard(current.id,name);
+      boards = boards.map(board=>board.id===renamed.id?renamed:board);
+      message = 'Nome atualizado.';
+    } catch(e) { error='Não foi possível renomear: '+String(e); }
+  }
+  async function chooseConnection(id: string): Promise<void> {
+    if (connecting) return;
+    if (!connectFrom) {
+      connectFrom=id;
+      message='Selecione o botão Conectar em outro cartão para traçar uma seta.';
+      return;
+    }
+    if (connectFrom===id) { connectFrom=null; message='Conexão cancelada.'; return; }
+    connecting=true;
+    const source=connectFrom;
+    try {
+      const edge=await boardApi.connect(activeBoardId,source,id);
+      if (!connections.some(existing=>existing.id===edge.id)) connections=[...connections,edge];
+      connectFrom=null;
+      message='Conexão salva.';
+    } catch(e) { error='Falha ao conectar os cartões: '+String(e); }
+    finally { connecting=false; }
+  }
+  async function removeConnection(id: string): Promise<void> {
+    try {
+      await boardApi.disconnect(activeBoardId,id);
+      connections=connections.filter(edge=>edge.id!==id);
+      message='Conexão removida.';
+    } catch(e) { error='Falha ao remover conexão: '+String(e); }
   }
   onMount(() => {
     void load();
@@ -160,7 +270,7 @@
       const initial = content ?? (kind === 'note' ? 'Nova anotação...' :
         kind === 'link' ? 'https://' :
         kind === 'table' ? JSON.stringify([['Título', 'Valor'], ['Item 1', ''], ['Item 2', '']]) : 'Imagem');
-      const item = await boardApi.create(kind, position.x + items.length % 6 * 24,
+      const item = await boardApi.create(activeBoardId, kind, position.x + items.length % 6 * 24,
         position.y + items.length % 6 * 24, initial, dataUrl);
       items = [...items, item];
       if (dataUrl) assets = { ...assets, [item.id]: dataUrl };
@@ -306,6 +416,8 @@
       if (!current) return;
       await boardApi.remove(item.id,current.revision);
       items = items.filter(card=>card.id!==item.id);
+      connections = connections.filter(edge=>edge.from_id!==item.id && edge.to_id!==item.id);
+      if (connectFrom===item.id) connectFrom=null;
       if (selected===item.id) selected=null;
       try { localStorage.removeItem(draftKey(item.id)); } catch { /* keep going */ }
       message = 'Cartão removido do quadro.';
@@ -315,7 +427,16 @@
 
 <section class="re-board-screen" aria-label="Quadro infinito">
   <div class="re-board-toolbar">
-    <div class="re-board-intro"><span class="re-board-kicker">SEU ESPAÇO VISUAL</span><strong>Quadro<span class="re-board-accent">.</span></strong><small>Organize ideias sem limites de página.</small></div>
+    <div class="re-board-intro"><span class="re-board-kicker">SEU ESPAÇO VISUAL</span><strong>Quadros<span class="re-board-accent">.</span></strong><small>Organize suas ideias e conecte cartões.</small>
+      <div class="re-board-picker"><label for="recall-board-select">Quadro atual</label>
+        <select id="recall-board-select" value={activeBoardId} disabled={switching || loading}
+          onchange={(event)=>{const value=event.currentTarget.value;void switchBoard(value).finally(()=>{event.currentTarget.value=activeBoardId;});}}>
+          {#each boards as board (board.id)}<option value={board.id}>{board.name}</option>{/each}
+        </select>
+        <button title="Criar novo quadro" aria-label="Criar novo quadro" disabled={switching} onclick={()=>{void newBoard();}}><Plus size={15}/></button>
+        <button title="Renomear quadro" aria-label="Renomear quadro" disabled={switching} onclick={()=>{void renameCurrentBoard();}}><Pencil size={14}/></button>
+      </div>
+    </div>
     <div class="re-board-tools" role="toolbar" aria-label="Adicionar ao quadro">
       <button onclick={() => { void create('note'); }} disabled={busy}><StickyNote size={16}/> Nota</button>
       <button onclick={chooseImage} disabled={busy}><ImagePlus size={16}/> Imagem</button>
@@ -331,16 +452,30 @@
     ondragover={event=>event.preventDefault()} ondrop={onDrop}>
     <div class="re-board-grid" style={'background-size: '+(28*zoom)+'px '+(28*zoom)+'px; background-position: '+panX+'px '+panY+'px'}></div>
     <div class="re-board-world" style={'transform:translate('+panX+'px,'+panY+'px) scale('+zoom+')'}>
+      <svg class="re-board-edges" xmlns="http://www.w3.org/2000/svg" width="1" height="1" aria-hidden="true">
+        <defs><marker id="re-board-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+          <path d="M0,0 L7,3 L0,6 Z" fill="#da5578"/></marker></defs>
+        {#each connections as edge (edge.id)}
+          {@const source = items.find(item=>item.id===edge.from_id)}
+          {@const target = items.find(item=>item.id===edge.to_id)}
+          {#if source && target}
+            <line x1={source.x + source.width/2} y1={source.y + source.height/2}
+              x2={target.x + target.width/2} y2={target.y + target.height/2}
+              stroke="#da5578" stroke-width="2.5" marker-end="url(#re-board-arrow)"/>
+          {/if}
+        {/each}
+      </svg>
       {#each items as item (item.id)}
         <article class="re-board-card" class:re-board-selected={selected===item.id}
           class:re-board-note={item.kind==='note'} class:re-board-image={item.kind==='image'}
-          class:re-board-link={item.kind==='link'} class:re-board-table={item.kind==='table'}
+          class:re-board-link={item.kind==='link'} class:re-board-table={item.kind==='table'} class:re-board-connecting={connectFrom===item.id}
           style={'left:'+item.x+'px;top:'+item.y+'px;width:'+item.width+'px;height:'+item.height+'px'}>
           <div class="re-board-card-top">
             <button class="re-board-handle" title="Arrastar cartão" aria-label="Arrastar cartão"
               onpointerdown={event=>itemPointer(event,item,'move')} onclick={()=>selected=item.id}>
               <Move size={14}/> <span>{item.kind==='note'?'NOTA':item.kind==='link'?'LINK':item.kind==='image'?'IMAGEM':'TABELA'}</span>
             </button>
+            <button class="re-board-connect" title={connectFrom===item.id?'Cancelar conexão':'Criar conexão'} aria-label={connectFrom===item.id?'Cancelar conexão':'Conectar cartão'} disabled={connecting} onclick={()=>{void chooseConnection(item.id);}}><Link2 size={14}/></button>
             <button class="re-board-remove" title="Remover cartão" aria-label="Remover cartão" onclick={()=>{void removeCard(item);}}><Trash2 size={14}/></button>
           </div>
           {#if item.kind==='note'}
@@ -391,7 +526,17 @@
       <button title="Aumentar zoom" aria-label="Aumentar zoom" onclick={()=>zoomButton(1.15)}><ZoomIn size={17}/></button>
       <button title="Recentralizar quadro" aria-label="Recentralizar quadro" onclick={()=>{panX=0;panY=0;zoom=1;}}><RotateCcw size={16}/></button>
     </div>
-    <div class="re-board-help">Arraste o fundo para navegar · Roda do mouse: zoom · Ctrl+V: colar imagem ou texto</div>
+    {#if selected && connections.some(edge=>edge.from_id===selected || edge.to_id===selected)}
+      <div class="re-board-connections" aria-label="Conexões do cartão selecionado">
+        <strong>Conexões</strong>
+        {#each connections.filter(edge=>edge.from_id===selected || edge.to_id===selected) as edge (edge.id)}
+          <button title="Remover esta conexão" onclick={()=>{void removeConnection(edge.id);}}>
+            <Unlink2 size={13}/> {edge.from_id===selected?'Para':'De'} {items.find(item=>item.id===(edge.from_id===selected?edge.to_id:edge.from_id))?.content.slice(0,22) || 'cartão'}
+          </button>
+        {/each}
+      </div>
+    {/if}
+    <div class="re-board-help">Arraste o fundo · Roda: zoom · Use Conectar em dois cartões para criar uma seta</div>
   </div>
 </section>
 
@@ -403,6 +548,17 @@
   .re-board-intro strong{font-size:22px;line-height:1.1;letter-spacing:-.4px}
   .re-board-intro small{font-size:11px;color:#a9a3ae}
   .re-board-accent{color:#e90530}
+  .re-board-picker{display:flex;align-items:center;gap:5px;margin-top:8px}
+  .re-board-picker label{font-size:10px;color:#bbaeb7;white-space:nowrap;margin-right:3px}
+  .re-board-picker select{background:#201a20;color:#f4edf2;border:1px solid #58414d;border-radius:7px;max-width:185px;padding:5px 8px;font-size:12px}
+  .re-board-picker button{display:grid;place-items:center;height:28px;width:28px;background:#271d24;border:1px solid #49323e;border-radius:6px;color:#f1d9e1}
+  .re-board-edges{position:absolute;top:0;left:0;overflow:visible;pointer-events:none}
+  .re-board-connect{display:grid;place-items:center;width:28px;height:27px;border:0;background:transparent;color:#e4a6ba}
+  .re-board-connect:hover{color:#ff5c89}
+  .re-board-connecting{border-color:#fc5e8a!important;box-shadow:0 0 0 2px #d73d6a,0 0 25px #d73d6a40}
+  .re-board-connections{position:absolute;top:15px;right:15px;display:flex;flex-direction:column;gap:5px;max-height:170px;overflow-y:auto;min-width:155px;max-width:250px;background:#1a181ded;border:1px solid #52414d;border-radius:9px;padding:9px;z-index:3}
+  .re-board-connections strong{font-size:11px}
+  .re-board-connections button{display:flex;align-items:center;gap:6px;background:#2b222b;border:0;border-radius:5px;padding:7px;color:#f8d0df;font-size:11px;text-align:left;max-width:230px;word-break:break-word}
   .re-board-tools{display:flex;gap:7px;flex-wrap:wrap}
   .re-board-tools button,.re-board-empty button{display:inline-flex;gap:7px;align-items:center;justify-content:center;background:#221d23;border:1px solid #4b353d;border-radius:9px;padding:9px 12px;color:#f4ecf0;font-size:12px;font-weight:650}
   .re-board-tools button:hover,.re-board-empty button:hover{background:#432330;border-color:#ae3854}
