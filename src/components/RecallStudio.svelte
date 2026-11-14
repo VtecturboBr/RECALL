@@ -17,6 +17,7 @@
   import { buildWorkspace, nextTask, toSlides, searchWorkspace, taskPeriod, tasksByPeriod, resumeSlideIndex } from '../lib/workspace';
   import { parseTaskCapture } from '../lib/smartCapture';
   import { UNNAMED_TASK, taskTitleForSave, isEmptyIdeaEdit, restoreIdeaDraft } from '../lib/editorSafety';
+  import { saveOwnedDraft, discardOwnedDraft } from '../lib/draftOwnership';
   import type { Note, Task, InboxItem, Reminder, ReminderEvent, ReminderRule } from '../lib/types';
 
   type View = 'now' | 'archive';
@@ -77,12 +78,12 @@
   function preserveNoteDraft() {
     if (!draftNoteId) return;
     try {
-      localStorage.setItem(draftKey(draftNoteId),
-        JSON.stringify({title:noteTitle,body:noteBody,revision:noteRevision}));
+      saveOwnedDraft(draftKey(draftNoteId),
+        {title:noteTitle,body:noteBody,revision:noteRevision});
     } catch { /* Database save remains authoritative; storage may be full. */ }
   }
   function discardLocalDraftByKey(key: string) {
-    try { localStorage.removeItem(key); } catch { /* Storage unavailable. */ }
+    try { discardOwnedDraft(key); } catch { /* Storage unavailable. */ }
   }
   function discardLocalDraft(id: string) { discardLocalDraftByKey(draftKey(id)); }
   let noteSaving = $state(false);
@@ -98,7 +99,7 @@
   function ideaDraftKey(id: string) { return 'recall-idea-draft:' + id; }
   function preserveIdeaDraft() {
     if (!draftIdeaId) return;
-    try { localStorage.setItem(ideaDraftKey(draftIdeaId), JSON.stringify({ text: ideaText, revision: ideaRevision })); }
+    try { saveOwnedDraft(ideaDraftKey(draftIdeaId), { text: ideaText, revision: ideaRevision }); }
     catch { /* Writing to SQLite remains authoritative. */ }
   }
   let ideaSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -115,9 +116,9 @@
   function taskDraftKey(id: string) { return 'recall-task-draft:' + id; }
   function preserveTaskDraft() {
     if (!draftTaskId) return;
-    try { localStorage.setItem(taskDraftKey(draftTaskId), JSON.stringify({
+    try { saveOwnedDraft(taskDraftKey(draftTaskId), {
       title: taskTitle, details: taskDetails, due: taskDue, revision: taskRevision
-    })); } catch { /* Writing to SQLite remains authoritative. */ }
+    }); } catch { /* Writing to SQLite remains authoritative. */ }
   }
   let taskSaveTimer: ReturnType<typeof setTimeout> | undefined;
   let taskSaveInFlight: Promise<boolean> | null = null;
@@ -599,29 +600,13 @@
     return flushNote();
   }
 
-  async function focusSummaryForTask(taskId: string): Promise<{ sessionId: string | null; summary: string | undefined }> {
-    const active = await focusApi.active();
-    if (!active || active.task_id !== taskId) return { sessionId: null, summary: undefined };
-    let summary: string | undefined;
-    try { summary = localStorage.getItem('recall-focus-summary:' + active.id)?.slice(0,2000) ?? undefined; }
-    catch { /* Summary draft may be unavailable; do not erase existing history. */ }
-    return { sessionId: active.id, summary };
-  }
-
-  function clearSavedFocusSummary(sessionId: string | null) {
-    if (!sessionId) return;
-    try { localStorage.removeItem('recall-focus-summary:' + sessionId); } catch { /* best effort */ }
-  }
-
   async function completeTask(task: Task) {
     if (busy) return;
     if (selected?.type === 'task' && selected.task.id === task.id && !(await flushDraft())) return;
     busy = true;
     try {
       const finishing = task.completed_at === null;
-      const draft = finishing ? await focusSummaryForTask(task.id) : {sessionId:null, summary:undefined};
-      await tasksApi.complete(task.id, finishing, draft.summary);
-      if (finishing) clearSavedFocusSummary(draft.sessionId);
+      await tasksApi.complete(task.id, finishing);
       if (finishing && task.id === focusedTaskId) clearFocus();
       await refresh();
     } catch (e) { error = 'Falha ao alterar tarefa: ' + String(e); }
@@ -913,13 +898,9 @@
       if (saveInFlight) await saveInFlight;
       if (ideaSaveInFlight) await ideaSaveInFlight;
       if (taskSaveInFlight) await taskSaveInFlight;
-      let focusDraft: { sessionId: string | null; summary: string | undefined } = { sessionId: null, summary: undefined };
       if (entry.type === 'note') await notesApi.delete(entry.note.id);
-      else if (entry.type === 'task') {
-        focusDraft = await focusSummaryForTask(entry.task.id);
-        await tasksApi.delete(entry.task.id, focusDraft.summary);
-      } else await inboxApi.dismiss(entry.idea.id);
-      clearSavedFocusSummary(focusDraft.sessionId);
+      else if (entry.type === 'task') await tasksApi.delete(entry.task.id);
+      else await inboxApi.dismiss(entry.idea.id);
       // Only discard local recovery copies after the backend confirms deletion.
       if (entry.type === 'note') discardLocalDraft(entry.note.id);
       if (entry.type === 'task') {

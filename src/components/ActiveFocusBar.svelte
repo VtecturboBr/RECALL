@@ -3,6 +3,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { Clock3, Pause, Square, ArrowUpRight } from 'lucide-svelte';
   import { focusApi } from '../lib/api';
+  import { shouldClearFocusDraft } from '../lib/focusDraftSafety';
   import type { FocusSession } from '../lib/types';
 
   let { onOpen }: { onOpen: (taskId: string) => void } = $props();
@@ -28,12 +29,14 @@
     busy = true;
     error = '';
     const key = 'recall-focus-summary:' + session.id;
-    let summary = '';
-    try { summary = (localStorage.getItem(key) ?? '').slice(0,2000); }
+    let raw: string | null = null;
+    try { raw = localStorage.getItem(key); }
     catch { /* The session remains resumable even if cache is disabled. */ }
     try {
-      await focusApi.stop(session.id, reason, summary);
-      try { localStorage.removeItem(key); } catch { /* Best effort */ }
+      await focusApi.stop(session.id, reason, (raw ?? '').slice(0, 2000));
+      try {
+        if (shouldClearFocusDraft(raw, localStorage.getItem(key))) localStorage.removeItem(key);
+      } catch { /* Best effort; keep recovery draft when uncertain. */ }
       active = null;
     } catch (e) {
       error = 'Não foi possível pausar/finalizar o foco. Seu resumo permanece guardado: ' + String(e);

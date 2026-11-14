@@ -56,3 +56,22 @@
 12. Confirmar notas, ideias, tarefas, lembretes, apresentação, links, foco, histórico e backups pré-existentes. Nenhuma migração SQLite extra além da v7.
 
 **Nunca fazer merge automático na `main`.**
+
+## Consolidação dos PRs #21 e #22 (branch de validação)
+
+- Base: #22. A branch de consolidação preserva a barra global do foco, a restauração SQLite atômica e todos os testes/lockfiles de #22.
+- #21: incorporadas as proteções de rascunho dos editores de nota, tarefa, ideia, nota flutuante e "Onde parei?". Quando outra WebView sobrescreve o cache, uma cópia de recuperação é retida sob `recall-draft-recovery:`. **Ainda não existe UI para gerenciar essas cópias**, nem garantia transacional entre WebViews: F09 permanece parcialmente pendente.
+- #21: removido o heartbeat duplicado do componente Svelte; o Rust é a fonte autoritativa do tempo.
+- Unificada a finalização/exclusão de tarefa em `tasksApi`: o resumo em edição é enviado à transação SQLite para todos os chamadores, e o cache só é apagado se o conteúdo ainda corresponde ao snapshot enviado.
+- Barra de foco global e painel de foco agora também respeitam a proteção contra limpezas de snapshots modificados durante chamadas assíncronas.
+- Adicionados testes para proteção de rascunhos e descarte condicional de resumos de foco.
+
+### Critérios adicionais de validação
+
+1. Criar tarefa em foco, digitar resumo e concluir a tarefa a partir de diferentes interfaces; verificar resumo no histórico.
+2. Repetir exclusão enquanto um resumo é editado; confirmar que uma digitação posterior à requisição não é apagada.
+3. Abrir nota na janela principal e em cartão flutuante, gerar conflito, confirmar que o rascunho competidor fica em cache de recuperação e o SQLite não é sobrescrito.
+4. Alternar rapidamente a tela Agora e Arquivo enquanto uma sessão está ativa; conferir que o cronômetro não depende do frontend.
+5. Executar `npm ci`, `npm run check`, `npm run test:unit`, `npm run build`, `cargo test --locked` e os testes de restauração no Windows CI. **Não publicar como estável sem o instalador e validação manual.**
+
+A branch de consolidação não altera a `main`, não faz merge dos PRs anteriores e não muda o formato de dados da Alpha 9.2.1.

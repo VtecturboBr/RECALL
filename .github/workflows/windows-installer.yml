@@ -17,6 +17,7 @@ on:
       - 'feature/v0.5-alpha9-1-contexto-conectado'
       - 'feature/v0.5-alpha9-2-revisao-diaria'
       - 'fix/alpha9-2-1-estabilidade-integridade'
+      - 'fix/alpha9-2-1-consolidacao-validacao'
   workflow_dispatch:
 
 permissions:
