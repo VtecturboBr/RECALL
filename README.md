@@ -2,7 +2,7 @@
 
 **Sua memória externa para Windows:** notas, tarefas, ideias, lembretes locais, apresentações, foco, revisão diária e o novo Quadro Infinito.
 
-> **Versão experimental desta branch:** `0.5.0-alpha.10.3` — navegação do Quadro com minimapa, pesquisa e enquadramento. CI e teste visual no Windows continuam obrigatórios. **Não é uma versão estável.** Sem sincronização Android.
+> **Versão experimental desta branch:** `0.5.0-alpha.10.4` — recuperação visível de rascunhos e conflitos do Quadro. CI e teste visual no Windows continuam obrigatórios. **Não é uma versão estável.** Sem sincronização Android.
 
 ## O que o aplicativo oferece
 
@@ -13,6 +13,16 @@
 - **Captura Rápida:** janela global `Ctrl+Shift+Espaço` enquanto o RECALL está em execução, inclusive na bandeja; cria ideias e tarefas.
 - **Lembretes 2.0:** notificações genéricas (sem título privado na tela bloqueada), recorrência, adiamento e recuperação de lembretes vencidos.
 - **Armazenamento local:** SQLite com WAL, revisões concorrentes para dados textuais, exclusão lógica, históricos internos e snapshots verificados.
+
+## Alpha 10.4 — Recuperação segura de rascunhos
+
+- O Quadro exibe aviso quando encontra **rascunhos conflitantes, órfãos, de outras janelas ou falhas de salvamento**.
+- **Examinar cópias:** apresenta o conteúdo preservado e permite criar outro cartão a partir de notas/links/tabelas, sem sobrescrever o original ou apagar o histórico.
+- **Descartar cópia:** exige confirmação, confere o conteúdo original antes de apagar e é bloqueado quando há alterações pendentes.
+- A versão passa a identificar o editor por janela, guardando cópias separadas quando dois WebViews disputam o mesmo rascunho. O salvamento só apaga um rascunho que continue **idêntico** ao original enviado.
+- Sem nova migração do banco: continua no SQLite v10. **Não dispensa backup, nem substitui validação manual no Windows.**
+
+Roteiro e limitações: [Alpha 10.4 — Recuperação](docs/ALPHA10_4_RECUPERACAO.md).
 
 ## Alpha 10.3 — Navegação e descoberta do Quadro
 
@@ -65,7 +75,7 @@ Esta atualização corrige erros encontrados na auditoria da Alpha 9.2:
 1. Feche o RECALL completamente pelo ícone da bandeja do sistema.
 2. Faça uma cópia integral da pasta `%APPDATA%\app.memoriaexterna.desktop`. Para testar migrações, prefira uma **conta Windows de teste** e uma **cópia** dos dados, não o banco principal.
 3. Abra [GitHub Actions do RECALL](https://github.com/VtecturboBr/RECALL/actions/workflows/windows-installer.yml).
-4. Selecione o run da branch `feature/v0.5-alpha10-3-navegacao-quadro` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-3-navegacao-Windows-x64`.
+4. Selecione o run da branch `fix/alpha10-4-recuperacao-rascunhos` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-4-recuperacao-Windows-x64`.
 5. Extraia o ZIP, compare o SHA-256 do `.exe` com `SHA256SUMS.txt` e instale. Consulte [guia do instalador](docs/INSTALADOR_WINDOWS.md).
 
 O instalador é prévia **não assinada digitalmente**. Nenhum merge automático é feito na `main`.
