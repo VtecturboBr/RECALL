@@ -40,7 +40,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- package-lock.json src-tauri/Cargo.lock
-          if (-not (git diff --cached --quiet)) {
+          $changed = @(git diff --cached --name-only)
+          if ($changed.Count -gt 0) {
             git commit -m "build(alpha9.2.1): lock npm and cargo dependency graphs"
             if ($LASTEXITCODE -ne 0) { throw "Falha ao commitar lockfiles" }
             git push origin HEAD:fix/alpha9-2-1-estabilidade-integridade
