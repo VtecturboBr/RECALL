@@ -109,7 +109,7 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
         .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await?;
     let starting_version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await?;
-    if starting_version > 8 {
+    if starting_version > 9 {
         return Err(sqlx::Error::Protocol(
             "Banco de dados criado por versão mais recente do RECALL; atualização necessária".into()
         ));
@@ -139,6 +139,10 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     if starting_version < 8 && existing_user_tables > 0 {
         create_backup(&pool,path,"pre-alpha10-board").await.map_err(|e|
             sqlx::Error::Protocol(format!("Backup pré-Quadro falhou: {e}")))?;
+    }
+    if starting_version == 8 && existing_user_tables > 0 {
+        create_backup(&pool,path,"pre-alpha10-1-boards").await.map_err(|e|
+            sqlx::Error::Protocol(format!("Backup pré-múltiplos quadros falhou: {e}")))?;
     }
     // On upgrades, the first integrity-schema change is preceded by a verified
     // snapshot. New databases do not need a pre-migration backup.
@@ -232,6 +236,8 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     crate::links::verify_v7(&pool).await?;
     if starting_version < 8 { crate::whiteboard::migrate_v8(&pool).await?; }
     crate::whiteboard::verify_v8(&pool).await?;
+    if starting_version < 9 { crate::whiteboard::migrate_v9(&pool).await?; }
+    crate::whiteboard::verify_v9(&pool).await?;
     Ok(pool)
 }
 
