@@ -333,6 +333,38 @@ mod planning_tests {
         reopened.close().await; let _=std::fs::remove_dir_all(dir);
     }
 
+    #[tokio::test]
+    async fn closing_task_preserves_focus_summary_transactionally() {
+        let dir=test_dir();let path=dir.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let task=super::create(&pool,"Preservar progresso").await.unwrap();
+        let session=crate::focus::start(&pool,&task.id).await.unwrap();
+        super::set_completed_with_summary(&pool,&task.id,true,Some("Resumo que estava em edição"))
+            .await.unwrap();
+        let history=crate::focus::history(&pool,&task.id).await.unwrap();
+        let saved=history.iter().find(|row|row.id==session.id).unwrap();
+        assert_eq!(saved.state,"interrupted");
+        assert_eq!(saved.summary,"Resumo que estava em edição");
+        assert!(super::get(&pool,&task.id).await.unwrap().unwrap().completed_at.is_some());
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn deleting_task_preserves_focus_summary_without_erasing_task_data() {
+        let dir=test_dir();let path=dir.join("memoria.sqlite");
+        let pool=crate::db::connect(&path).await.unwrap();
+        let task=super::create(&pool,"Guardar tudo").await.unwrap();
+        crate::focus::start(&pool,&task.id).await.unwrap();
+        super::delete_with_summary(&pool,&task.id,Some("Progresso da tarefa removida"))
+            .await.unwrap();
+        let history=crate::focus::history(&pool,&task.id).await.unwrap();
+        assert_eq!(history[0].summary,"Progresso da tarefa removida");
+        let stored:String=sqlx::query_scalar("SELECT title FROM tasks WHERE id=?")
+            .bind(&task.id).fetch_one(&pool).await.unwrap();
+        assert_eq!(stored,"Guardar tudo");
+        pool.close().await;let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn accepts_only_valid_bucket_and_schedule() {
         assert!(valid_plan("today", None));
