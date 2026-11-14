@@ -52,7 +52,7 @@ def verify_database(path: Path) -> dict[str, int]:
             if result is None or result[0] != "ok":
                 raise RestoreError(f"Falha na integridade do SQLite: {result}")
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version > 9 or version < 0:
+            if version > 10 or version < 0:
                 raise RestoreError(f"Versão SQLite do RECALL incompatível: v{version}.")
             fk_errors = connection.execute("PRAGMA foreign_key_check").fetchone()
             if fk_errors:
@@ -77,6 +77,8 @@ def verify_database(path: Path) -> dict[str, int]:
                 raise RestoreError("Banco v8 sem tabelas do Quadro.")
             if version >= 9 and not {"whiteboards","whiteboard_connections"}.issubset(tables):
                 raise RestoreError("Banco v9 sem quadros ou conexões.")
+            if version >= 10 and "whiteboard_references" not in tables:
+                raise RestoreError("Banco v10 sem referências do Quadro.")
             counts: dict[str, int] = {}
             for name in ("notes", "tasks", "inbox_items"):
                 if name in tables:

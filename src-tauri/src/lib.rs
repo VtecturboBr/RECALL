@@ -7,6 +7,7 @@ mod focus;
 mod links;
 mod review;
 mod whiteboard;
+mod board_references;
 
 use sqlx::SqlitePool;
 use tauri::{Emitter, Manager};
@@ -460,6 +461,32 @@ async fn disconnect_board_items(
     Ok(())
 }
 
+
+#[tauri::command]
+async fn search_board_reference_targets(
+    state:tauri::State<'_,AppState>,query:String
+) -> Result<Vec<board_references::ReferenceTarget>,String> {
+    board_references::search_targets(&state.pool,&query).await
+}
+#[tauri::command]
+async fn list_board_references(
+    state:tauri::State<'_,AppState>,board_id:String
+) -> Result<Vec<board_references::BoardReference>,String> {
+    board_references::list_references(&state.pool,&board_id)
+        .await.map_err(|e|e.to_string())
+}
+#[tauri::command]
+async fn create_board_reference(
+    state:tauri::State<'_,AppState>,app:tauri::AppHandle,
+    board_id:String,target_type:String,target_id:String,x:f64,y:f64
+) -> Result<whiteboard::BoardItem,String> {
+    let item=board_references::create_reference(
+        &state.pool,&board_id,&target_type,&target_id,x,y
+    ).await?;
+    let _=app.emit("board:changed",&item.id);
+    Ok(item)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -471,6 +498,7 @@ pub fn run() {
             list_board_items,create_board_item,update_board_item,delete_board_item,get_board_asset,
             list_whiteboards,create_whiteboard,rename_whiteboard,
             list_board_connections,connect_board_items,disconnect_board_items,
+            search_board_reference_targets,list_board_references,create_board_reference,
             set_task_completed, delete_task, list_inbox, capture_inbox, update_inbox, dismiss_inbox, inbox_to_note, inbox_to_task,
             list_reminders, list_reminder_events, schedule_reminder, cancel_reminder,
             snooze_reminder, acknowledge_reminder])
