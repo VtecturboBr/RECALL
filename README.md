@@ -2,7 +2,7 @@
 
 **Sua memória externa para Windows:** notas, tarefas, ideias, lembretes locais, apresentações, foco, revisão diária e o novo Quadro Infinito.
 
-> **Versão experimental desta branch:** `0.5.0-alpha.10.2` — referências dinâmicas a notas e tarefas existentes. CI e teste visual no Windows continuam obrigatórios. **Não é uma versão estável.** Sem sincronização Android.
+> **Versão experimental desta branch:** `0.5.0-alpha.10.3` — navegação do Quadro com minimapa, pesquisa e enquadramento. CI e teste visual no Windows continuam obrigatórios. **Não é uma versão estável.** Sem sincronização Android.
 
 ## O que o aplicativo oferece
 
@@ -13,6 +13,17 @@
 - **Captura Rápida:** janela global `Ctrl+Shift+Espaço` enquanto o RECALL está em execução, inclusive na bandeja; cria ideias e tarefas.
 - **Lembretes 2.0:** notificações genéricas (sem título privado na tela bloqueada), recorrência, adiamento e recuperação de lembretes vencidos.
 - **Armazenamento local:** SQLite com WAL, revisões concorrentes para dados textuais, exclusão lógica, históricos internos e snapshots verificados.
+
+## Alpha 10.3 — Navegação e descoberta do Quadro
+
+- **Encontrar:** pesquisa local por texto dos cartões e pelas informações atuais das notas/tarefas vinculadas, incluindo acentos.
+- **Minimapa:** visão reduzida dos cartões; clique em um cartão para centralizá-lo, e veja qual região está visível.
+- **Enquadrar:** ajuste automático do zoom para a área ocupada pelos cartões.
+- **Retomar a posição:** a câmera e o zoom ficam preservados por quadro no armazenamento local, sem alterar o SQLite.
+- **Atalhos (com o quadro em foco):** F enquadra tudo, Ctrl+F abre a busca e Esc fecha a busca ou limpa a seleção.
+- **Sem migração:** mantém SQLite v10 da Alpha 10.2, sem dependências novas nem mudanças nos dados.
+
+Consulte [roteiro de validação](docs/ALPHA10_3_NAVEGACAO.md).
 
 ## Alpha 10.2 — Cartões vinculados ao Arquivo
 
@@ -54,7 +65,7 @@ Esta atualização corrige erros encontrados na auditoria da Alpha 9.2:
 1. Feche o RECALL completamente pelo ícone da bandeja do sistema.
 2. Faça uma cópia integral da pasta `%APPDATA%\app.memoriaexterna.desktop`. Para testar migrações, prefira uma **conta Windows de teste** e uma **cópia** dos dados, não o banco principal.
 3. Abra [GitHub Actions do RECALL](https://github.com/VtecturboBr/RECALL/actions/workflows/windows-installer.yml).
-4. Selecione o run da branch `feature/v0.5-alpha10-2-referencias-dinamicas` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-2-referencias-dinamicas-Windows-x64`.
+4. Selecione o run da branch `feature/v0.5-alpha10-3-navegacao-quadro` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-3-navegacao-Windows-x64`.
 5. Extraia o ZIP, compare o SHA-256 do `.exe` com `SHA256SUMS.txt` e instale. Consulte [guia do instalador](docs/INSTALADOR_WINDOWS.md).
 
 O instalador é prévia **não assinada digitalmente**. Nenhum merge automático é feito na `main`.

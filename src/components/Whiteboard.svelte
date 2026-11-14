@@ -3,6 +3,11 @@
   import { listen } from '@tauri-apps/api/event';
   import { StickyNote, ImagePlus, Link2, Table2, ZoomIn, ZoomOut, RotateCcw, Trash2, Move, Plus, ExternalLink, Pencil, Unlink2, Database, FileText, ListTodo, Search, X, CheckCircle2 } from 'lucide-svelte';
   import { boardApi } from '../lib/api';
+  import {
+    boardBounds, fitBoardView, focusBoardItem, saveBoardView,
+    restoreBoardView, searchBoardCards, miniRect, visibleWorldRect,
+    clampBoardZoom
+  } from '../lib/boardNavigation';
   import type { BoardItem, BoardKind, Whiteboard, BoardConnection, BoardReference, BoardReferenceTarget } from '../lib/types';
 
   let { onOpenReference }: { onOpenReference?: (kind: 'note' | 'task', id: string) => void | Promise<void> } = $props();
@@ -34,6 +39,18 @@
   let panY = $state(0);
   let stage: HTMLDivElement;
   let imageInput: HTMLInputElement;
+  let viewportWidth = $state(850);
+  let viewportHeight = $state(520);
+  let searchOpen = $state(false);
+  let searchQuery = $state('');
+  let minimapOpen = $state(true);
+  let viewTimer: ReturnType<typeof setTimeout> | null = null;
+  const foundCards = $derived(searchBoardCards(items,references,searchQuery,40));
+  const overviewBounds = $derived(boardBounds(items,160));
+  const currentMiniWindow = $derived(miniRect(
+    visibleWorldRect({panX,panY,zoom},viewportWidth,viewportHeight),
+    overviewBounds,180,112
+  ));
 
   const dirty = new Set<string>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -41,6 +58,81 @@
   type Gesture = { kind: 'pan' | 'move' | 'resize'; pointer: number; startX: number; startY: number; x: number; y: number; width: number; height: number; id?: string };
   let gesture: Gesture | null = null;
   const draftKey = (id: string) => 'recall-board-draft:' + id;
+  const viewKey = (id: string) => 'recall-board-viewport-v1:' + id;
+  function persistView(id = activeBoardId) {
+    if (!id || !stage) return;
+    try {
+      localStorage.setItem(viewKey(id), JSON.stringify(
+        saveBoardView({panX,panY,zoom},viewportWidth,viewportHeight)
+      ));
+    } catch { /* View state is optional; never interrupt SQLite content saves. */ }
+  }
+  function scheduleViewSave() {
+    if (viewTimer !== null) clearTimeout(viewTimer);
+    viewTimer = setTimeout(() => {
+      viewTimer = null;
+      persistView();
+    }, 320);
+  }
+  function restoreView(id: string) {
+    try {
+      const raw = localStorage.getItem(viewKey(id));
+      const restored = raw ? restoreBoardView(JSON.parse(raw),viewportWidth,viewportHeight) : null;
+      if (restored) {
+        panX = restored.panX;
+        panY = restored.panY;
+        zoom = restored.zoom;
+        return;
+      }
+    } catch { /* Ignore malformed or unavailable view state only. */ }
+    panX = 0; panY = 0; zoom = 1;
+  }
+  function labelForCard(item: BoardItem): string {
+    const linked = references[item.id];
+    if (linked) return linked.available ? linked.title : 'Referência indisponível';
+    if (item.kind==='image') return item.content || 'Imagem';
+    if (item.kind==='table') {
+      try {
+        const parsed: unknown = JSON.parse(item.content);
+        if (Array.isArray(parsed)) return parsed.flat().map(v => String(v)).join(' ').slice(0,120) || 'Tabela';
+      } catch { /* older table content */ }
+      return 'Tabela';
+    }
+    return item.content.trim().slice(0,120) || 'Cartão sem texto';
+  }
+  function focusCard(id: string) {
+    if (switching || loading) return;
+    const item = findItem(id);
+    if (!item || !stage) return;
+    const view = focusBoardItem(item,viewportWidth,viewportHeight,zoom);
+    panX = view.panX; panY = view.panY; zoom = view.zoom;
+    selected = id;
+    scheduleViewSave();
+  }
+  function fitAll() {
+    if (switching || loading) return;
+    const view = fitBoardView(items,viewportWidth,viewportHeight);
+    panX=view.panX; panY=view.panY; zoom=view.zoom;
+    scheduleViewSave();
+  }
+  function closeBoardSearch() { searchOpen=false; searchQuery=''; }
+  function boardShortcut(event: KeyboardEvent) {
+    if (switching || loading) return;
+    const target=event.target;
+    if (pickerOpen || (target instanceof HTMLElement &&
+      target.closest('input,textarea,select,[contenteditable="true"],button'))) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='f') {
+      event.preventDefault();
+      searchOpen=true;
+      return;
+    }
+    if (event.key==='Escape') {
+      connectFrom=null; selected=null;
+      closeBoardSearch();
+    } else if (event.key.toLowerCase()==='f' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault(); fitAll();
+    }
+  }
 
   const findItem = (id: string) => items.find(item => item.id === id);
   function sameFields(a: BoardItem, b: BoardItem): boolean {
@@ -157,7 +249,8 @@
       selected = null;
       connectFrom = null;
       assets = {};
-      panX = 0; panY = 0; zoom = 1;
+      restoreView(id);
+      searchQuery = '';
       for (const item of loaded) {
         if (item.kind !== 'image') continue;
         void boardApi.asset(item.id).then(dataUrl => {
@@ -203,6 +296,7 @@
         error = 'Existem cartões não salvos. Resolva o erro antes de trocar de quadro.';
         return;
       }
+      persistView(activeBoardId);
       await loadBoard(id);
       activeBoardId = id;
       try { localStorage.setItem(BOARD_KEY,id); } catch { /* optional */ }
@@ -315,6 +409,13 @@
   onMount(() => {
     let alive = true;
     const unlisten: Array<() => void> = [];
+    viewportWidth = Math.max(1,stage.clientWidth);
+    viewportHeight = Math.max(1,stage.clientHeight);
+    const observer = new ResizeObserver(() => {
+      viewportWidth = Math.max(1,stage.clientWidth);
+      viewportHeight = Math.max(1,stage.clientHeight);
+    });
+    observer.observe(stage);
     for (const eventName of ['notes:changed','tasks:changed']) {
       void listen(eventName, () => { if (alive) void refreshReferences(); })
         .then(dispose => { if (alive) unlisten.push(dispose); else dispose(); });
@@ -326,6 +427,9 @@
     window.addEventListener('paste', paste);
     return () => {
       alive = false;
+      observer.disconnect();
+      if (viewTimer !== null) clearTimeout(viewTimer);
+      persistView();
       unlisten.forEach(dispose => dispose());
       if (pickerTimer !== null) clearTimeout(pickerTimer);
       stage.removeEventListener('wheel', wheel);
@@ -411,16 +515,18 @@
     if (file) void addImage(file);
   }
   function zoomAt(clientX: number, clientY: number, to: number) {
-    const next = Math.max(.2, Math.min(2.2, to));
+    const next = clampBoardZoom(to);
     const bounds = stage?.getBoundingClientRect();
     if (!bounds) return;
     const x = clientX - bounds.left, y = clientY - bounds.top;
     panX = x - (x - panX) * next / zoom;
     panY = y - (y - panY) * next / zoom;
     zoom = next;
+    scheduleViewSave();
   }
   function wheel(event: WheelEvent) {
     event.preventDefault();
+    if (switching || loading) return;
     zoomAt(event.clientX, event.clientY, zoom * (event.deltaY > 0 ? .90 : 1.10));
   }
   function zoomButton(factor: number) {
@@ -428,9 +534,10 @@
     if (bounds) zoomAt(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2, zoom * factor);
   }
   function startPan(event: PointerEvent) {
-    if (event.button !== 0 && event.button !== 1) return;
+    if (switching || loading || (event.button !== 0 && event.button !== 1)) return;
     const target = event.target;
-    if (target instanceof HTMLElement && target.closest('.re-board-card,.re-board-empty,.re-board-zoom,button,input,textarea,a')) return;
+    if (target instanceof HTMLElement && target.closest('.re-board-card,.re-board-empty,.re-board-zoom,.re-board-minimap,.re-board-search-panel,button,input,textarea,a')) return;
+    stage.focus({preventScroll:true});
     gesture = { kind: 'pan', pointer: event.pointerId, startX: event.clientX, startY: event.clientY,
       x: panX, y: panY, width: 0, height: 0 };
     stage.setPointerCapture(event.pointerId);
@@ -461,6 +568,7 @@
       const item = findItem(gesture.id);
       if (item) { dirty.add(item.id); keepDraft(item); scheduleSave(item.id, 180); }
     }
+    if (gesture.kind === 'pan') scheduleViewSave();
     gesture = null;
     if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
   }
@@ -534,6 +642,9 @@
       <button onclick={() => { void create('link'); }} disabled={busy || switching || loading}><Link2 size={16}/> Link</button>
       <button onclick={() => { void create('table'); }} disabled={busy || switching || loading}><Table2 size={16}/> Tabela</button>
       <button onclick={openPicker} disabled={busy || switching || loading || referenceSaving} title="Referenciar nota ou tarefa já existente"><Database size={16}/> Do Arquivo</button>
+      <button onclick={()=>{searchOpen=!searchOpen;if(!searchOpen)searchQuery='';}} disabled={loading} title="Localizar cartões neste quadro"><Search size={16}/> Encontrar</button>
+      <button onclick={fitAll} disabled={loading || items.length===0} title="Enquadrar todos os cartões"><ZoomOut size={16}/> Enquadrar</button>
+      <button onclick={()=>{minimapOpen=!minimapOpen;}} disabled={loading} title="Mostrar ou ocultar minimapa"><RotateCcw size={16}/> Minimapa</button>
       <input bind:this={imageInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="re-board-hidden" onchange={inputImages} aria-label="Escolher imagem para o quadro"/>
     </div>
   </div>
@@ -541,7 +652,7 @@
   {#if message}<div role="status" class="re-board-message"><span>{message}</span><button onclick={()=>message=''} aria-label="Fechar aviso">×</button></div>{/if}
   <div class="re-board-stage" bind:this={stage} tabindex="0" role="application" aria-label="Quadro visual: arraste o fundo para navegar, use a roda do mouse para aproximar"
     onpointerdown={startPan} onpointermove={pointerMove} onpointerup={pointerEnd} onpointercancel={pointerEnd}
-    ondragover={event=>event.preventDefault()} ondrop={onDrop}>
+    ondragover={event=>event.preventDefault()} ondrop={onDrop} onkeydown={boardShortcut}>
     <div class="re-board-grid" style={'background-size: '+(28*zoom)+'px '+(28*zoom)+'px; background-position: '+panX+'px '+panY+'px'}></div>
     <div class="re-board-world" style={'transform:translate('+panX+'px,'+panY+'px) scale('+zoom+')'}>
       <svg class="re-board-edges" xmlns="http://www.w3.org/2000/svg" width="1" height="1" aria-hidden="true">
@@ -625,11 +736,50 @@
         <button onclick={()=>{void create('note');}}><Plus size={15}/> Criar primeira nota</button>
       </div>
     {/if}
+    {#if searchOpen}
+      <div class="re-board-search-panel" aria-label="Busca de cartões neste quadro">
+        <div class="re-board-search-head"><strong><Search size={15}/> Encontrar no quadro</strong>
+          <button title="Fechar busca" aria-label="Fechar busca" onclick={closeBoardSearch}><X size={16}/></button>
+        </div>
+        <input type="search" aria-label="Buscar cartões" placeholder="Pesquise notas, tabelas ou vínculos..."
+          maxlength="140" value={searchQuery} oninput={event=>searchQuery=event.currentTarget.value}
+          onkeydown={event=>{if(event.key==='Escape')closeBoardSearch();}}/>
+        {#if searchQuery.trim()}
+          <div class="re-board-search-results">
+            {#if foundCards.length}
+              <small>{foundCards.length}{foundCards.length===40?' ou mais':''} cartões encontrados</small>
+              {#each foundCards as found (found.id)}
+                <button onclick={()=>{focusCard(found.id);closeBoardSearch();}} title={labelForCard(found)}>
+                  <span class="re-board-search-kind">{references[found.id]?'VÍNCULO':found.kind.toUpperCase()}</span>
+                  <span>{labelForCard(found)}</span>
+                </button>
+              {/each}
+            {:else}<p>Nenhum cartão corresponde à busca.</p>{/if}
+          </div>
+        {:else}<p class="re-board-search-tip">Busque dentro do quadro atual. Selecione um resultado para ir diretamente ao cartão.</p>{/if}
+      </div>
+    {/if}
+    {#if minimapOpen && items.length>0}
+      <div class="re-board-minimap" aria-label="Minimapa do quadro">
+        <div class="re-board-minimap-header"><strong>MINIMAPA</strong><span>{items.length} cartões</span></div>
+        <div class="re-board-mini-content" aria-label="Selecionar cartão no minimapa">
+          {#each items as marker (marker.id)}
+            {@const rect=miniRect(marker,overviewBounds,180,112)}
+            <button class="re-board-mini-card" class:re-board-mini-selected={selected===marker.id}
+              style={'left:'+rect.x+'px;top:'+rect.y+'px;width:'+rect.width+'px;height:'+rect.height+'px'}
+              title={'Localizar '+labelForCard(marker)} aria-label={'Localizar '+labelForCard(marker)}
+              onclick={()=>focusCard(marker.id)}></button>
+          {/each}
+          <div class="re-board-mini-window"
+            style={'left:'+currentMiniWindow.x+'px;top:'+currentMiniWindow.y+'px;width:'+currentMiniWindow.width+'px;height:'+currentMiniWindow.height+'px'}></div>
+        </div>
+      </div>
+    {/if}
     <div class="re-board-zoom" aria-label="Controles de zoom">
       <button title="Diminuir zoom" aria-label="Diminuir zoom" onclick={()=>zoomButton(1/1.15)}><ZoomOut size={17}/></button>
       <span>{Math.round(zoom*100)}%</span>
       <button title="Aumentar zoom" aria-label="Aumentar zoom" onclick={()=>zoomButton(1.15)}><ZoomIn size={17}/></button>
-      <button title="Recentralizar quadro" aria-label="Recentralizar quadro" onclick={()=>{panX=0;panY=0;zoom=1;}}><RotateCcw size={16}/></button>
+      <button title="Recentralizar quadro" aria-label="Recentralizar quadro" onclick={()=>{panX=0;panY=0;zoom=1;scheduleViewSave();}}><RotateCcw size={16}/></button>
     </div>
     {#if selected && connections.some(edge=>edge.from_id===selected || edge.to_id===selected)}
       <div class="re-board-connections" aria-label="Conexões do cartão selecionado">
@@ -641,7 +791,7 @@
         {/each}
       </div>
     {/if}
-    <div class="re-board-help">Arraste o fundo · Roda: zoom · Use Conectar em dois cartões para criar uma seta</div>
+    <div class="re-board-help">Arraste para navegar · Roda: zoom · F: enquadrar · Ctrl+F: busca (quadro em foco)</div>
   </div>
   {#if pickerOpen}
     <div class="re-board-modal-backdrop">
@@ -697,6 +847,27 @@
   .re-board-tools button,.re-board-empty button{display:inline-flex;gap:7px;align-items:center;justify-content:center;background:#221d23;border:1px solid #4b353d;border-radius:9px;padding:9px 12px;color:#f4ecf0;font-size:12px;font-weight:650}
   .re-board-tools button:hover,.re-board-empty button:hover{background:#432330;border-color:#ae3854}
   .re-board-hidden{display:none}
+  .re-board-search-panel{position:absolute;top:17px;left:17px;width:min(355px,calc(100% - 34px));max-height:min(430px,70%);display:flex;flex-direction:column;gap:9px;padding:13px;background:#18151dea;border:1px solid #5a4555;border-radius:12px;box-shadow:0 14px 35px #0009;z-index:4}
+  .re-board-search-head{display:flex;align-items:center;justify-content:space-between;color:#f8e9f2}
+  .re-board-search-head strong{display:flex;gap:7px;align-items:center;font-size:13px}
+  .re-board-search-head button{background:transparent;border:0;color:#c5b4be;padding:3px;display:grid;place-items:center}
+  .re-board-search-panel input{width:100%;background:#100e14;border:1px solid #554451;border-radius:7px;padding:10px;color:#f7eef4;outline:none;font-size:12px}
+  .re-board-search-panel input:focus{border-color:#b95879}
+  .re-board-search-results{overflow-y:auto;display:flex;flex-direction:column;gap:4px;min-height:0}
+  .re-board-search-results small{color:#b6acb9;font-size:10px;padding:3px}
+  .re-board-search-results button{display:flex;align-items:center;gap:9px;border:1px solid transparent;border-radius:7px;padding:9px;background:#292029;color:#e9dce5;text-align:left;font-size:12px}
+  .re-board-search-results button:hover{border-color:#ad637e;background:#39232d}
+  .re-board-search-results button span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+  .re-board-search-kind{font-size:9px;font-weight:750;color:#e99bb6;width:58px;flex:0 0 58px}
+  .re-board-search-tip,.re-board-search-results p{font-size:11px;line-height:1.4;color:#bcb0bf;margin:3px 0}
+  .re-board-minimap{position:absolute;left:17px;bottom:55px;background:#1c1820e8;border:1px solid #4b3e49;border-radius:9px;padding:8px;z-index:3}
+  .re-board-minimap-header{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#b6a4b0;margin-bottom:7px}
+  .re-board-minimap-header strong{font-size:9px;letter-spacing:1px}
+  .re-board-minimap-header span{font-size:9px}
+  .re-board-mini-content{position:relative;width:180px;height:112px;overflow:hidden;background-color:#100f13;background-image:radial-gradient(#4b3e4c .8px,transparent 1px);background-size:15px 15px;border:1px solid #3d323c;border-radius:5px}
+  .re-board-mini-card{position:absolute;z-index:1;min-width:3px;min-height:3px;border:1px solid #d687a1;background:#78384f;border-radius:1px;opacity:.8;cursor:pointer;padding:0}
+  .re-board-mini-card:hover,.re-board-mini-selected{background:#ff4f89;border-color:#ffc7d9;opacity:1;z-index:2}
+  .re-board-mini-window{position:absolute;border:1.5px solid #faf0f4;background:#ffffff12;pointer-events:none;z-index:3;box-sizing:border-box}
   .re-board-modal-backdrop{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#070608c9;z-index:20;padding:20px}
   .re-board-modal{width:min(600px,100%);max-height:min(650px,100%);display:flex;flex-direction:column;background:#18151c;border:1px solid #50404e;border-radius:14px;box-shadow:0 35px 80px #000a;overflow:hidden}
   .re-board-modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:15px;padding:21px 22px 14px}
@@ -761,5 +932,5 @@
   .re-board-zoom button{width:32px;height:32px;display:grid;place-items:center;background:none;border:0;color:#eee}
   .re-board-zoom span{font-size:12px;min-width:47px;text-align:center;color:#cac0c9}
   .re-board-help{position:absolute;bottom:24px;left:22px;font-size:11px;color:#a9a0ae;background:#17151abc;padding:9px 11px;border-radius:7px;pointer-events:none}
-  @media(max-width:800px){.re-board-toolbar{padding:12px;gap:10px}.re-board-intro small{display:none}.re-board-tools button{padding:8px;font-size:11px}.re-board-help{display:none}}
+  @media(max-width:800px){.re-board-toolbar{padding:12px;gap:10px}.re-board-intro small{display:none}.re-board-tools button{padding:8px;font-size:11px}.re-board-help{display:none}.re-board-minimap{bottom:16px;left:10px}}
 </style>
