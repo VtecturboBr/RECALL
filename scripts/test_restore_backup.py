@@ -11,7 +11,11 @@ from restore_backup import RestoreError, restore_database, verify_database
 def make_database(path: Path, text: str) -> None:
     with closing(sqlite3.connect(path)) as db:
         with db:
-            db.execute("CREATE TABLE notes(id TEXT PRIMARY KEY, title TEXT NOT NULL)")
+            db.execute("""CREATE TABLE notes(
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL DEFAULT 'note', pinned INTEGER NOT NULL DEFAULT 0,
+                remind_at INTEGER, notified_at INTEGER,created_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0,deleted_at INTEGER)""")
             db.execute("INSERT INTO notes(id,title) VALUES('n1',?)", (text,))
 
 
@@ -46,6 +50,40 @@ class OfflineRestoreTests(unittest.TestCase):
             with self.assertRaises(RestoreError):
                 restore_database(invalid, db)
             self.assertEqual(title(db), "Manter")
+
+    def test_rejects_structurally_wrong_database_even_when_quick_check_passes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            wrong = Path(temp) / "other.sqlite"
+            with closing(sqlite3.connect(wrong)) as db:
+                db.execute("CREATE TABLE notes(id TEXT PRIMARY KEY, title TEXT)")
+            with self.assertRaises(RestoreError):
+                verify_database(wrong)
+
+    def test_rejects_future_database_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "future.sqlite"
+            make_database(path, "Future")
+            with closing(sqlite3.connect(path)) as db:
+                db.execute("PRAGMA user_version=99")
+            with self.assertRaises(RestoreError):
+                verify_database(path)
+
+    def test_failed_atomic_replace_keeps_original_database_in_place(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            base=Path(temp)
+            target=base/"memoria.sqlite"
+            backup=base/"backups"/"recall-manual-test.sqlite"
+            backup.parent.mkdir()
+            make_database(target,"Original")
+            make_database(backup,"Restaurado")
+            with patch("restore_backup.os.replace",side_effect=OSError("simulated power loss")):
+                with self.assertRaises(OSError):
+                    restore_database(backup,target)
+            self.assertEqual(title(target),"Original")
+            safety=list(backup.parent.glob("recall-pre-restore-*.sqlite"))
+            self.assertEqual(len(safety),1)
+            self.assertEqual(title(safety[0]),"Original")
 
     def test_refuses_to_replace_if_wal_indicator_exists(self):
         with tempfile.TemporaryDirectory() as temp:
