@@ -190,16 +190,18 @@ async fn save_task_resume(
     Ok(saved)
 }
 #[tauri::command]
-async fn set_task_completed(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, completed: bool) -> Result<tasks::Task, String> {
-    let task = tasks::set_completed(&state.pool, &id, completed).await.map_err(|e| e.to_string())?;
+async fn set_task_completed(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, completed: bool, focus_summary: Option<String>) -> Result<tasks::Task, String> {
+    if focus_summary.as_ref().is_some_and(|s| s.chars().count() > 2000) { return Err("Resumo muito longo".into()); }
+    let task = tasks::set_completed_with_summary(&state.pool, &id, completed, focus_summary.as_deref()).await.map_err(|e| e.to_string())?;
     if completed { let _ = app.emit("reminders:changed", &id); }
     let _ = app.emit("tasks:changed", &id);
     if completed { let _ = app.emit("focus:changed", &id); }
     Ok(task)
 }
 #[tauri::command]
-async fn delete_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String) -> Result<(), String> {
-    tasks::delete(&state.pool, &id).await.map_err(|e| e.to_string())?;
+async fn delete_task(state: tauri::State<'_, AppState>, app: tauri::AppHandle, id: String, focus_summary: Option<String>) -> Result<(), String> {
+    if focus_summary.as_ref().is_some_and(|s| s.chars().count() > 2000) { return Err("Resumo muito longo".into()); }
+    tasks::delete_with_summary(&state.pool, &id, focus_summary.as_deref()).await.map_err(|e| e.to_string())?;
     let _ = app.emit("reminders:changed", &id);
     let _ = app.emit("tasks:changed", &id);
     let _ = app.emit("focus:changed", &id);
