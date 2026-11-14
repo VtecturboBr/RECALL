@@ -1,7 +1,7 @@
 {
   "name": "memoria-externa",
   "private": true,
-  "version": "0.5.0-alpha.10.4",
+  "version": "0.5.0-alpha.10.5",
   "type": "module",
   "scripts": {
     "dev": "vite",

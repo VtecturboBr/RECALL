@@ -2,7 +2,7 @@
 
 **Sua memória externa para Windows:** notas, tarefas, ideias, lembretes locais, apresentações, foco, revisão diária e o novo Quadro Infinito.
 
-> **Versão experimental desta branch:** `0.5.0-alpha.10.4` — recuperação visível de rascunhos e conflitos do Quadro. CI e teste visual no Windows continuam obrigatórios. **Não é uma versão estável.** Sem sincronização Android.
+> **Versão experimental desta branch:** `0.5.0-alpha.10.5` — histórico seguro de Desfazer/Refazer no Quadro. CI e teste visual no Windows continuam obrigatórios. **Não é uma versão estável.** Sem sincronização Android.
 
 ## O que o aplicativo oferece
 
@@ -13,6 +13,17 @@
 - **Captura Rápida:** janela global `Ctrl+Shift+Espaço` enquanto o RECALL está em execução, inclusive na bandeja; cria ideias e tarefas.
 - **Lembretes 2.0:** notificações genéricas (sem título privado na tela bloqueada), recorrência, adiamento e recuperação de lembretes vencidos.
 - **Armazenamento local:** SQLite com WAL, revisões concorrentes para dados textuais, exclusão lógica, históricos internos e snapshots verificados.
+
+## Alpha 10.5 — Desfazer e refazer no Quadro
+
+- **Desfazer** e **Refazer** na barra do Quadro para mudanças de texto, movimentação e tamanho de cartões, com atalhos Ctrl+Z, Ctrl+Y e Ctrl+Shift+Z **quando o quadro estiver em foco**.
+- O histórico registra apenas gravações confirmadas pelo SQLite; se há um rascunho pendente, primeiro é salvo com a proteção existente.
+- Para evitar sobrescrever a edição de outra janela, o undo/redo chama a mesma API com comparação de revisão CAS. Um conflito cancela a operação; a versão do banco permanece inalterada.
+- Até 80 alterações salvas por quadro durante a sessão. Trocar de quadro ou reiniciar o app limpa o histórico. Digitação dentro de campos mantém o desfazer nativo do editor.
+- O histórico **não cobre** criação/exclusão de cartões, conexões ou versões anteriores ao início da sessão.
+- Continua no **SQLite v10**, sem migração ou dependência adicional.
+
+Ver [documentação e testes](docs/ALPHA10_5_HISTORICO.md).
 
 ## Alpha 10.4 — Recuperação segura de rascunhos
 
@@ -75,7 +86,7 @@ Esta atualização corrige erros encontrados na auditoria da Alpha 9.2:
 1. Feche o RECALL completamente pelo ícone da bandeja do sistema.
 2. Faça uma cópia integral da pasta `%APPDATA%\app.memoriaexterna.desktop`. Para testar migrações, prefira uma **conta Windows de teste** e uma **cópia** dos dados, não o banco principal.
 3. Abra [GitHub Actions do RECALL](https://github.com/VtecturboBr/RECALL/actions/workflows/windows-installer.yml).
-4. Selecione o run da branch `fix/alpha10-4-recuperacao-rascunhos` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-4-recuperacao-Windows-x64`.
+4. Selecione o run da branch `feature/v0.5-alpha10-5-historico-seguro` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha10-5-historico-seguro-Windows-x64`.
 5. Extraia o ZIP, compare o SHA-256 do `.exe` com `SHA256SUMS.txt` e instale. Consulte [guia do instalador](docs/INSTALADOR_WINDOWS.md).
 
 O instalador é prévia **não assinada digitalmente**. Nenhum merge automático é feito na `main`.
