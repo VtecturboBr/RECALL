@@ -2,7 +2,7 @@
 
 **Sua memória externa para Windows:** notas, tarefas, ideias, lembretes locais, apresentações, foco, revisão diária e o novo Quadro Infinito.
 
-> **Nova etapa experimental:** `0.5.0-alpha.11.1` — abertura do Quadro em lotes pequenos, verificação de cursores e menor custo reativo no Svelte. CI e teste manual no Windows continuam obrigatórios. **Não é versão estável.** Sem sincronização Android.
+> **Nova etapa experimental:** `0.5.0-alpha.11.2` — proteção contra leituras concorrentes inconsistentes, regressões SQLite e benchmark reproduzível. CI e teste manual no Windows continuam obrigatórios. **Não é versão estável.** Sem sincronização Android.
 
 ## O que o aplicativo oferece
 
@@ -13,6 +13,16 @@
 - **Captura Rápida:** janela global `Ctrl+Shift+Espaço` enquanto o RECALL está em execução, inclusive na bandeja; cria ideias e tarefas.
 - **Lembretes 2.0:** notificações genéricas (sem título privado na tela bloqueada), recorrência, adiamento e recuperação de lembretes vencidos.
 - **Armazenamento local:** SQLite com WAL, revisões concorrentes para dados textuais, exclusão lógica, históricos internos e snapshots verificados.
+
+## Alpha 11.2 — Integridade da leitura e regressão de desempenho
+
+- **Consistência entre janelas:** antes e depois da leitura paginada o RECALL calcula uma assinatura de dados do quadro no SQLite (quantidade, soma das revisões, IDs internos e tamanho total do conteúdo).
+- **Falha segura:** ao detectar escrita concorrente ou um lote incompleto, a lista parcial é descartada, a edição continua bloqueada e o Quadro oferece **Tentar novamente** sem sobrescrever o banco.
+- **Sem mudanças no armazenamento:** o CAS de edições, a recuperação de rascunhos, o histórico de Desfazer/Refazer, os backups e o SQLite v10 continuam.
+- **Novos testes Rust e JS:** inserção, alteração de posição e conteúdo, exclusão, quadro separado, contadores inválidos e paginação incompleta.
+- **Benchmark sintético automatizado:** 50.000 cartões e 10.000 conexões em Node. A CI registra tempo de filtragem, mesclagem e variação de heap; esses valores **não equivalem a FPS ou RAM do WebView real** e não são usados como limites frágeis de aprovação.
+
+Veja a [auditoria e limitações da Alpha 11.2](docs/ALPHA11_2_ESTABILIDADE.md).
 
 ## Alpha 11.1 — Abertura segura em lotes e menor memória
 
@@ -108,7 +118,7 @@ Esta atualização corrige erros encontrados na auditoria da Alpha 9.2:
 1. Feche o RECALL completamente pelo ícone da bandeja do sistema.
 2. Faça uma cópia integral da pasta `%APPDATA%\app.memoriaexterna.desktop`. Para testar migrações, prefira uma **conta Windows de teste** e uma **cópia** dos dados, não o banco principal.
 3. Abra [GitHub Actions do RECALL](https://github.com/VtecturboBr/RECALL/actions/workflows/windows-installer.yml).
-4. Selecione o run da branch `feature/v0.5-alpha11-1-abertura-por-lotes` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha11-1-abertura-por-lotes-Windows-x64`.
+4. Selecione o run da branch `fix/v0.5-alpha11-2-integridade-carga` com **Success**, em **Artifacts** baixe `RECALL-v0.5-alpha11-2-integridade-Windows-x64`.
 5. Extraia o ZIP, compare o SHA-256 do `.exe` com `SHA256SUMS.txt` e instale. Consulte [guia do instalador](docs/INSTALADOR_WINDOWS.md).
 
 O instalador é prévia **não assinada digitalmente**. Nenhum merge automático é feito na `main`.
