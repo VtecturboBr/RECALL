@@ -101,6 +101,19 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
                     "RECALL: restauração interrompida detectada. O banco original está preservado em .recall-original-*.sqlite. Recupere-o antes de iniciar o aplicativo.".into()));
             }
         }
+        // A previously installed RECALL database may be missing while its
+        // verified snapshots still exist. Never create an empty database and
+        // show an apparently empty app as though the user's work vanished.
+        let backups=list_backups(path)
+            .map_err(|e|sqlx::Error::Protocol(format!(
+                "RECALL: não foi possível verificar backups antes de criar o banco: {e}"
+            )))?;
+        if !backups.is_empty() {
+            return Err(sqlx::Error::Protocol(format!(
+                "RECALL: o banco principal está ausente, mas há {} backup(s) na pasta backups. A criação de um banco vazio foi bloqueada. Restaure uma cópia verificada antes de iniciar.",
+                backups.len()
+            )));
+        }
     }
     let options = SqliteConnectOptions::new()
         .filename(path)
@@ -396,6 +409,46 @@ mod integrity_tests {
         second_pool.close().await;
         pool.close().await;
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn missing_primary_db_with_backups_never_creates_empty_replacement() {
+        let dir=temporary_dir();
+        let path=dir.join("memoria.sqlite");
+        let pool=connect(&path).await.unwrap();
+        let note=create_copy(&pool,"Importante","Não pode parecer perdido","note")
+            .await.unwrap();
+        let backup=create_backup(&pool,&path,"safety-missing-main").await.unwrap();
+        assert!(Path::new(&backup.file_path).exists());
+        pool.close().await;
+        fs::remove_file(&path).unwrap();
+        let failure=connect(&path).await.err().expect("deve bloquear a criação");
+        let message=failure.to_string();
+        assert!(message.contains("banco principal está ausente"));
+        assert!(!path.exists(),"nunca criar banco vazio ao encontrar backups");
+        assert!(Path::new(&backup.file_path).exists());
+        // The existing snapshot must still contain the original note.
+        let options=SqliteConnectOptions::new()
+            .filename(&backup.file_path).read_only(true);
+        let recovered=SqlitePoolOptions::new().max_connections(1)
+            .connect_with(options).await.unwrap();
+        let stored:String=sqlx::query_scalar("SELECT body FROM notes WHERE id=?")
+            .bind(&note.id).fetch_one(&recovered).await.unwrap();
+        assert_eq!(stored,"Não pode parecer perdido");
+        recovered.close().await;
+        let _=fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn fresh_install_without_backups_still_creates_database() {
+        let dir=temporary_dir();
+        let path=dir.join("memoria.sqlite");
+        assert!(!path.exists());
+        let pool=connect(&path).await.unwrap();
+        assert!(path.exists());
+        assert!(list_backups(&path).unwrap().is_empty());
+        pool.close().await;
+        let _=fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 {
   "name": "memoria-externa",
   "private": true,
-  "version": "0.5.0-alpha.11.1",
+  "version": "0.5.0-alpha.11.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "desktop": "tauri dev",
     "installer": "tauri build",
-    "test:unit": "node --experimental-strip-types --test"
+    "test:unit": "node --experimental-strip-types --test",
+    "bench:board": "node --experimental-strip-types scripts/board-performance-benchmark.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

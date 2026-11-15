@@ -32,6 +32,12 @@ export interface BoardItemsPage {
   items: BoardItem[];
   next_cursor: BoardPageCursor | null;
 }
+export interface BoardReadStamp {
+  card_count: number;
+  revision_total: number;
+  rowid_total: number;
+  content_bytes_total: number;
+}
 
 export interface BoardItem {
   id: string;

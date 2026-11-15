@@ -4,6 +4,7 @@
   import { StickyNote, ImagePlus, Link2, Table2, ZoomIn, ZoomOut, RotateCcw, Undo2, Redo2, Trash2, Move, Plus, ExternalLink, Pencil, Unlink2, Database, FileText, ListTodo, Search, X, CheckCircle2 } from 'lucide-svelte';
   import { boardApi } from '../lib/api';
   import { BOARD_PAGE_BATCH_SIZE, mergeBoardPage } from '../lib/boardPaging';
+  import { assertConsistentBoardLoad } from '../lib/boardReadIntegrity';
   import type { BoardPageCursor } from '../lib/types';
   import {
     selectVisibleBoardItems, selectVisibleBoardEdges,
@@ -467,11 +468,13 @@
     try {
       // Stream small IPC responses. Keep the previous board intact until
       // *every* page succeeds; a partial load must never look like deletion.
-      const [first,edges,linked] = await Promise.all([
-        boardApi.listPage(id,null,BOARD_PAGE_BATCH_SIZE),
+      const [initialStamp,edges,linked] = await Promise.all([
+        boardApi.readStamp(id),
         boardApi.connections(id),
         boardApi.references(id)
       ]);
+      if (request !== boardRequest) return;
+      const first=await boardApi.listPage(id,null,BOARD_PAGE_BATCH_SIZE);
       if (request !== boardRequest) return;
       const loaded:BoardItem[] = [];
       let page=first;
@@ -494,6 +497,11 @@
         page=await boardApi.listPage(id,next,BOARD_PAGE_BATCH_SIZE);
       }
       if (request !== boardRequest) return;
+      // Fail closed when another WebView changed the active board during
+      // pagination. Never publish a mixture of revisions as a complete list.
+      const finalStamp=await boardApi.readStamp(id);
+      if (request !== boardRequest) return;
+      assertConsistentBoardLoad(initialStamp,finalStamp,loaded.length);
       for (const handle of timers.values()) clearTimeout(handle);
       timers.clear();
       dirty.clear();
@@ -589,7 +597,7 @@
     finally { switching = false; }
   }
   async function newBoard(): Promise<void> {
-    if (switching || busy || historyBusy) return;
+    if (switching || busy || historyBusy || loading) return;
     const name = window.prompt('Nome do novo quadro:', 'Novo quadro');
     if (name===null) return;
     try {
@@ -914,8 +922,11 @@
       connections = connections.filter(edge=>edge.from_id!==item.id && edge.to_id!==item.id);
       if (connectFrom===item.id) connectFrom=null;
       if (selected===item.id) selected=null;
-      try { localStorage.removeItem(draftKey(item.id)); } catch { /* keep going */ }
-      message = 'Cartão removido do quadro.';
+      // Do not remove localStorage drafts here: another WebView may own
+      // the latest copy, or an orphan may be the user's only recovery path.
+      // The recovery centre can safely display/discard such copies.
+      scanBoardRecoveries();
+      message = 'Cartão removido do quadro. Possíveis rascunhos de recuperação foram preservados.';
     } catch (e) { error='Não foi possível remover: '+String(e); }
   }
 </script>

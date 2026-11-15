@@ -44,6 +44,8 @@ jobs:
         run: python -m unittest discover -s scripts -p "test_*.py"
       - name: Testar busca e organização de itens
         run: npm run test:unit
+      - name: Benchmark sintetico do Quadro (sem limites temporais instaveis)
+        run: npm run bench:board
       - name: Compilar frontend
         run: npm run build
       - name: Verificar Rust/Tauri

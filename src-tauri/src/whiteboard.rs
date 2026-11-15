@@ -191,6 +191,26 @@ pub struct BoardPage {
 }
 pub const MAX_BOARD_PAGE_SIZE: i64 = 200;
 
+/// Lightweight best-effort change detector around multi-call pagination.
+/// No stored columns or indexes are added; existing revision counters
+/// guarantee normal app edits change revision_total.
+#[derive(Clone, Debug, Serialize, FromRow, PartialEq, Eq)]
+pub struct BoardReadStamp {
+    pub card_count: i64,
+    pub revision_total: i64,
+    pub rowid_total: i64,
+    pub content_bytes_total: i64,
+}
+
+pub async fn read_stamp(pool: &SqlitePool, board_id: &str) -> Result<BoardReadStamp, sqlx::Error> {
+    sqlx::query_as("SELECT COUNT(*) AS card_count,
+        COALESCE(SUM(revision),0) AS revision_total,
+        COALESCE(SUM(rowid),0) AS rowid_total,
+        COALESCE(SUM(LENGTH(CAST(content AS BLOB))),0) AS content_bytes_total
+        FROM whiteboard_items WHERE board_id=? AND deleted_at IS NULL")
+        .bind(board_id).fetch_one(pool).await
+}
+
 pub async fn list_page(
     pool: &SqlitePool,
     board_id: &str,
@@ -454,6 +474,57 @@ mod tests {
         assert!(update(&pool,&initial.id,10.0,20.0,280.0,210.0,"Antes",3)
             .await.unwrap().is_none());
 
+        pool.close().await;
+        let _=fs::remove_dir_all(folder);
+    }
+
+    #[tokio::test]
+    async fn board_stamp_detects_changes_between_pages_without_migration() {
+        let folder=std::env::temp_dir().join(format!("recall-board-stamp-{}",Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let path=folder.join("memoria.sqlite");
+        let pool=db::connect(&path).await.unwrap();
+        let original=read_stamp(&pool,"default").await.unwrap();
+        assert_eq!(original.card_count,0);
+        let first=create(&pool,"default","note",0.0,0.0,"Conteúdo",None).await.unwrap();
+        let after_insert=read_stamp(&pool,"default").await.unwrap();
+        assert_ne!(original,after_insert);
+        assert_eq!(after_insert.card_count,1);
+        let first_page=list_page(&pool,"default",None,1).await.unwrap();
+        assert_eq!(first_page.items.len(),1);
+        let edited=update(&pool,&first.id,30.0,20.0,280.0,210.0,
+            "Conteúdo atualizado",first.revision).await.unwrap().unwrap();
+        let after_update=read_stamp(&pool,"default").await.unwrap();
+        assert_ne!(after_insert,after_update);
+        assert!(after_update.revision_total>after_insert.revision_total);
+        let second_board=create_board(&pool,"Isolado").await.unwrap();
+        create(&pool,&second_board.id,"note",0.0,0.0,"Remoto",None).await.unwrap();
+        assert_eq!(after_update,read_stamp(&pool,"default").await.unwrap(),
+            "escritas em outro quadro não invalidam a leitura do atual");
+        assert!(delete(&pool,&first.id,edited.revision).await.unwrap());
+        assert_eq!(read_stamp(&pool,"default").await.unwrap().card_count,0);
+        pool.close().await;
+        let _=fs::remove_dir_all(folder);
+    }
+
+    #[tokio::test]
+    async fn board_stamp_catches_mid_scan_mutations_even_with_equal_card_count() {
+        let folder=std::env::temp_dir().join(format!("recall-board-stamp-scan-{}",Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let path=folder.join("memoria.sqlite");
+        let pool=db::connect(&path).await.unwrap();
+        for n in 0..11 {
+            create(&pool,"default","note",n as f64,0.0,&format!("Nota {n}"),None).await.unwrap();
+        }
+        let start=read_stamp(&pool,"default").await.unwrap();
+        let first=list_page(&pool,"default",None,5).await.unwrap();
+        assert_eq!(first.items.len(),5);
+        let card=&first.items[0];
+        update(&pool,&card.id,card.x+1.0,card.y,card.width,card.height,
+            &card.content,card.revision).await.unwrap().unwrap();
+        let end=read_stamp(&pool,"default").await.unwrap();
+        assert_eq!(start.card_count,end.card_count);
+        assert_ne!(start,end,"alteração concorrente de geometria deve invalidar a leitura");
         pool.close().await;
         let _=fs::remove_dir_all(folder);
     }
