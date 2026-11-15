@@ -23,7 +23,16 @@ A Alpha 11.1 lia várias páginas separadas do SQLite. Um segundo WebView poderi
 - Também bloqueia criação de quadro enquanto dados estão sendo carregados.
 - Mecanismo de rascunhos da Alpha 10.4 e histórico CAS da Alpha 10.5 mantidos, sem alteração destrutiva.
 
-### 3. Desempenho mensurável
+### 3. Banco ausente e rascunhos órfãos (corrigidos)
+
+- Quando o banco principal `memoria.sqlite` não existe, o início verifica a existência de backups nomeados RECALL na pasta `backups`.
+- Se encontrar backups, **não** cria um banco novo aparentemente vazio: interrompe com mensagem orientando a restaurar uma cópia verificada.
+- Uma instalação totalmente nova, sem backups e sem arquivo principal, continua podendo criar seu banco normalmente.
+- Testes Rust verificam banco removido com backup válido (incluindo texto da nota original) e primeira instalação limpa.
+- Excluir um cartão deixa as cópias de recuperação no armazenamento local em vez de apagá-las. Cópias órfãs continuam visíveis para recuperação manual.
+- A limpeza de rascunhos deve sempre passar pelo fluxo de recuperação, com confirmação explícita e proteção contra alterações concorrentes.
+
+### 4. Desempenho mensurável
 
 - `npm run bench:board` simula 50 mil cartões e 10 mil conexões, fazendo seleção por viewport e mesclagem de lotes de 120.
 - O benchmark informa criação, seleção, mesclagem e variação do heap Node, **sem impor limite temporal em runner variável**.

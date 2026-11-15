@@ -18,6 +18,8 @@
 
 - **Consistência entre janelas:** antes e depois da leitura paginada o RECALL calcula uma assinatura de dados do quadro no SQLite (quantidade, soma das revisões, IDs internos e tamanho total do conteúdo).
 - **Falha segura:** ao detectar escrita concorrente ou um lote incompleto, a lista parcial é descartada, a edição continua bloqueada e o Quadro oferece **Tentar novamente** sem sobrescrever o banco.
+- **Rascunhos órfãos preservados:** ao excluir um cartão, uma cópia local possivelmente criada em outra janela não é mais apagada automaticamente.
+- **Inicialização protegida:** se o banco principal desaparecer mas existirem backups, o RECALL bloqueia a criação silenciosa de um banco vazio e orienta a recuperar os dados.
 - **Sem mudanças no armazenamento:** o CAS de edições, a recuperação de rascunhos, o histórico de Desfazer/Refazer, os backups e o SQLite v10 continuam.
 - **Novos testes Rust e JS:** inserção, alteração de posição e conteúdo, exclusão, quadro separado, contadores inválidos e paginação incompleta.
 - **Benchmark sintético automatizado:** 50.000 cartões e 10.000 conexões em Node. A CI registra tempo de filtragem, mesclagem e variação de heap; esses valores **não equivalem a FPS ou RAM do WebView real** e não são usados como limites frágeis de aprovação.
