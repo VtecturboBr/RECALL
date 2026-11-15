@@ -922,8 +922,11 @@
       connections = connections.filter(edge=>edge.from_id!==item.id && edge.to_id!==item.id);
       if (connectFrom===item.id) connectFrom=null;
       if (selected===item.id) selected=null;
-      try { localStorage.removeItem(draftKey(item.id)); } catch { /* keep going */ }
-      message = 'Cartão removido do quadro.';
+      // Do not remove localStorage drafts here: another WebView may own
+      // the latest copy, or an orphan may be the user's only recovery path.
+      // The recovery centre can safely display/discard such copies.
+      scanBoardRecoveries();
+      message = 'Cartão removido do quadro. Possíveis rascunhos de recuperação foram preservados.';
     } catch (e) { error='Não foi possível remover: '+String(e); }
   }
 </script>
